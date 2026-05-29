@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: casamento_db
+    environment:
+      POSTGRES_DB: casamento
+      POSTGRES_USER: casamento
+      POSTGRES_PASSWORD: casamento
+    ports:
+      - "5432:5432"
+    volumes:
+      - casamento_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U casamento -d casamento"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres_test:
+    image: postgres:16-alpine
+    container_name: casamento_db_test
+    environment:
+      POSTGRES_DB: casamento_test
+      POSTGRES_USER: casamento
+      POSTGRES_PASSWORD: casamento
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+volumes:
+  casamento_pgdata:
