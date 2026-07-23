@@ -1,6 +1,5 @@
 package br.com.casamento.guest.service;
 
-import br.com.casamento.auth.service.GuestTokenService;
 import br.com.casamento.domain.event.Event;
 import br.com.casamento.domain.guest.Guest;
 import br.com.casamento.guest.dto.ImportResultResponse;
@@ -21,8 +20,11 @@ import java.util.List;
 public class GuestImportService {
 
     @Inject
-    GuestTokenService tokenService;
+    PhoneNumberService phoneNumberService;
 
+    /**
+     * Expected CSV columns: name (required), phone (optional).
+     */
     @Transactional
     public ImportResultResponse importCsv(Event event, InputStream inputStream) {
         List<String[]> rows = new ArrayList<>();
@@ -38,9 +40,12 @@ public class GuestImportService {
                     new ImportResultResponse.ImportError(0, "Erro ao ler CSV: " + e.getMessage())
             ));
         }
-        return processRows(event, rows, "CSV");
+        return processRows(event, rows);
     }
 
+    /**
+     * Expected XLSX columns: col 0 = name, col 1 = phone.
+     */
     @Transactional
     public ImportResultResponse importExcel(Event event, InputStream inputStream) {
         List<String[]> rows = new ArrayList<>();
@@ -50,18 +55,18 @@ public class GuestImportService {
             for (Row row : sheet) {
                 if (firstRow) { firstRow = false; continue; } // skip header
                 String name = cellString(row.getCell(0));
-                String email = cellString(row.getCell(1));
-                rows.add(new String[]{name, email});
+                String phone = cellString(row.getCell(1));
+                rows.add(new String[]{name, phone});
             }
         } catch (Exception e) {
             return new ImportResultResponse(0, 0, 0, List.of(
                     new ImportResultResponse.ImportError(0, "Erro ao ler Excel: " + e.getMessage())
             ));
         }
-        return processRows(event, rows, "Excel");
+        return processRows(event, rows);
     }
 
-    private ImportResultResponse processRows(Event event, List<String[]> rows, String source) {
+    private ImportResultResponse processRows(Event event, List<String[]> rows) {
         int imported = 0;
         int skipped = 0;
         List<ImportResultResponse.ImportError> errors = new ArrayList<>();
@@ -69,27 +74,32 @@ public class GuestImportService {
         for (int i = 0; i < rows.size(); i++) {
             String[] row = rows.get(i);
             String name = row.length > 0 ? row[0].trim() : "";
+            String rawPhone = row.length > 1 ? row[1].trim() : "";
+
             if (name.isBlank()) {
                 skipped++;
                 continue;
             }
 
-            // Check for duplicate name in this event
-            long count = Guest.count("event.id = ?1 AND LOWER(name) = LOWER(?2)", event.id, name);
-            if (count > 0) {
+            String phoneE164 = phoneNumberService.normalize(rawPhone);
+
+            // Enforce unique phone per event
+            if (phoneE164 != null && Guest.findByEventAndPhone(event.id, phoneE164) != null) {
                 errors.add(new ImportResultResponse.ImportError(i + 2,
-                        "Convidado '" + name + "' já existe (linha " + (i + 2) + ")"));
+                        "Telefone '" + rawPhone + "' já existe para este evento (linha " + (i + 2) + ")"));
                 skipped++;
                 continue;
             }
 
+            // Allow duplicate names (phone is now the identity), but warn about it
             Guest guest = new Guest();
             guest.event = event;
             guest.name = name;
+            guest.phoneE164 = phoneE164;
+            guest.source = "IMPORTED";
             guest.status = "INVITED";
             guest.persist();
 
-            tokenService.createToken(guest);
             imported++;
         }
 

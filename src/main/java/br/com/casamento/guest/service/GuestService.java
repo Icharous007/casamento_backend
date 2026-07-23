@@ -21,34 +21,46 @@ public class GuestService {
     @Inject
     GuestTokenService tokenService;
 
+    @Inject
+    PhoneNumberService phoneNumberService;
+
     @ConfigProperty(name = "app.frontend-url", defaultValue = "http://localhost:5173")
     String frontendUrl;
 
     @Transactional
     public GuestResponse create(Event event, CreateGuestRequest request) {
+        String phoneE164 = phoneNumberService.normalize(request.phone());
+
+        // Enforce one phone per event
+        if (phoneE164 != null && Guest.findByEventAndPhone(event.id, phoneE164) != null) {
+            throw br.com.casamento.common.exception.AppException.badRequest(
+                    "PHONE_DUPLICATE", "Já existe um convidado com este telefone neste evento.");
+        }
+
         Guest guest = new Guest();
         guest.event = event;
         guest.name = request.displayName();
+        guest.phoneE164 = phoneE164;
+        guest.source = "IMPORTED";
         guest.status = "INVITED";
         guest.persist();
 
-        String rawToken = tokenService.createToken(guest);
-
-        return toResponse(guest, rawToken, null, null);
+        return toResponse(guest, null, null, null);
     }
 
     public GuestResponse toResponse(Guest guest, String rawToken, GuestProfile profile, Rsvp rsvp) {
-        String qrCodeUrl = frontendUrl + "/acesso?token=" + (rawToken != null ? rawToken : "");
+        String eventQrUrl = frontendUrl + "/save-the-date?event="
+                + (guest.event != null ? guest.event.slug : "");
         String rsvpStatus = rsvp != null ? rsvp.response : "PENDING";
-        String email = profile != null ? profile.email : null;
 
         return new GuestResponse(
                 guest.id.toString(),
                 guest.name,
                 guest.status,
-                email,
+                guest.phoneE164,
+                guest.source,
                 rawToken,
-                qrCodeUrl,
+                eventQrUrl,
                 rsvpStatus,
                 guest.createdAt
         );
@@ -57,7 +69,7 @@ public class GuestService {
     public List<Guest> list(UUID eventId, String search, int page, int pageSize) {
         if (search != null && !search.isBlank()) {
             return Guest.find(
-                    "event.id = ?1 AND LOWER(name) LIKE LOWER(CONCAT('%', ?2, '%'))",
+                    "event.id = ?1 AND (LOWER(name) LIKE LOWER(CONCAT('%', ?2, '%')) OR phoneE164 LIKE CONCAT('%', ?2, '%'))",
                     eventId, search
             ).page(page - 1, pageSize).list();
         }
@@ -68,7 +80,7 @@ public class GuestService {
     public long count(UUID eventId, String search) {
         if (search != null && !search.isBlank()) {
             return Guest.count(
-                    "event.id = ?1 AND LOWER(name) LIKE LOWER(CONCAT('%', ?2, '%'))",
+                    "event.id = ?1 AND (LOWER(name) LIKE LOWER(CONCAT('%', ?2, '%')) OR phoneE164 LIKE CONCAT('%', ?2, '%'))",
                     eventId, search
             );
         }

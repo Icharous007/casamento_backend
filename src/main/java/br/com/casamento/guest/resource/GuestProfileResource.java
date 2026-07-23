@@ -49,8 +49,6 @@ public class GuestProfileResource {
         }
 
         profile.displayName = request.confirmedName();
-        profile.email = request.confirmedEmail();
-        profile.phone = request.confirmedPhone();
         profile.acceptedTerms = true;
         profile.acceptedTermsAt = OffsetDateTime.now();
 
@@ -62,7 +60,7 @@ public class GuestProfileResource {
 
         return Response.ok(Map.of(
                 "guestId", guest.id.toString(),
-                "confirmedEmail", profile.email,
+                "displayName", profile.displayName,
                 "profileCompleted", true
         )).build();
     }

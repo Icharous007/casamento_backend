@@ -26,9 +26,6 @@ public class AdminAuthResource {
     @Inject
     RefreshTokenService refreshTokenService;
 
-    @Inject
-    PasswordResetService passwordResetService;
-
     @POST
     @Path("/login")
     @RateLimited
@@ -88,28 +85,6 @@ public class AdminAuthResource {
     @Path("/logout")
     public Response logout(@Valid RefreshTokenRequest request) {
         refreshTokenService.revokeByHash(request.refreshToken());
-        return Response.noContent().build();
-    }
-
-    @POST
-    @Path("/forgot-password")
-    @RateLimited
-    public Response forgotPassword(@Valid ForgotPasswordRequest request) {
-        // Silently processes — no user enumeration
-        passwordResetService.requestReset(request.email());
-        return Response.accepted().build();
-    }
-
-    @POST
-    @Path("/reset-password")
-    public Response resetPassword(@Valid ResetPasswordRequest request) {
-        String newHash = passwordService.hash(request.newPassword());
-        boolean ok = passwordResetService.resetPassword(request.token(), newHash);
-
-        if (!ok) {
-            throw AppException.badRequest("TOKEN_INVALID_OR_EXPIRED", "Token inválido ou expirado.");
-        }
-
         return Response.noContent().build();
     }
 }

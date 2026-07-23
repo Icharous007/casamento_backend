@@ -118,6 +118,74 @@ public class AdminGuestResource {
         return Response.ok(Map.of("guestId", guestId, "status", "BLOCKED")).build();
     }
 
+    // -------------------------------------------------------------------------
+    // QR code – event-level, points to the Save the Date self-registration page
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a QR code PNG pointing to the Save the Date page.
+     * The QR encodes the public URL; guests scan it, enter phone + name, and are
+     * immediately granted access (no OTP/verification step).
+     */
+    @GET
+    @Path("/qr-code")
+    @Produces("image/png")
+    @Transactional
+    public Response getEventQrCode(@QueryParam("eventId") String eventId) {
+        Event event = loadEvent(eventId);
+        String url = frontendUrl + "/save-the-date?event=" + event.slug;
+        byte[] png = qrCodeService.generateQrCodePng(url);
+        return Response.ok(png)
+                .header("Content-Disposition", "attachment; filename=\"qr-event-" + event.id + ".png\"")
+                .build();
+    }
+
+    /**
+     * Kept for backward compatibility with frontend code that still calls the per-guest QR endpoint.
+     * Now returns the event-level QR instead of a per-guest token link.
+     */
+    @GET
+    @Path("/{guestId}/qr-code")
+    @Produces("image/png")
+    @Transactional
+    public Response getQrCode(@PathParam("guestId") UUID guestId) {
+        Guest guest = Guest.findById(guestId);
+        if (guest == null) throw AppException.notFound("Convidado não encontrado.");
+        Event event = guest.event != null ? guest.event : loadEvent(null);
+        String url = frontendUrl + "/save-the-date?event=" + event.slug;
+        byte[] png = qrCodeService.generateQrCodePng(url);
+        return Response.ok(png)
+                .header("Content-Disposition", "attachment; filename=\"qr-" + guestId + ".png\"")
+                .build();
+    }
+
+    @GET
+    @Path("/qr-codes/export")
+    @Produces("application/zip")
+    @Transactional
+    public Response exportQrCodes(@QueryParam("eventId") String eventId) {
+        Event event = loadEvent(eventId);
+        // Single event QR for the entire guest list (phone-first self-registration)
+        String url = frontendUrl + "/save-the-date?event=" + event.slug;
+        byte[] png = qrCodeService.generateQrCodePng(url);
+
+        StreamingOutput stream = out -> {
+            try (ZipOutputStream zip = new ZipOutputStream(out)) {
+                zip.putNextEntry(new ZipEntry("qr-event-" + event.slug + ".png"));
+                zip.write(png);
+                zip.closeEntry();
+            }
+        };
+
+        return Response.ok(stream)
+                .header("Content-Disposition", "attachment; filename=\"qrcodes.zip\"")
+                .build();
+    }
+
+    // -------------------------------------------------------------------------
+    // Import
+    // -------------------------------------------------------------------------
+
     @POST
     @Path("/import")
     @Consumes(MediaType.MULTIPART_FORM_DATA)
@@ -144,59 +212,6 @@ public class AdminGuestResource {
         } catch (Exception e) {
             throw AppException.badRequest("IMPORT_ERROR", "Erro ao processar arquivo: " + e.getMessage());
         }
-    }
-
-    @GET
-    @Path("/{guestId}/qr-code")
-    @Produces("image/png")
-    @Transactional
-    public Response getQrCode(@PathParam("guestId") UUID guestId) {
-        Guest guest = Guest.findById(guestId);
-        if (guest == null) throw AppException.notFound("Convidado não encontrado.");
-
-        var tokens = br.com.casamento.auth.entity.GuestAccessToken.find(
-                "guest = ?1 AND revoked = false", guest).list();
-        if (tokens.isEmpty()) throw AppException.notFound("Token de acesso não encontrado.");
-
-        String rawHashToken = ((br.com.casamento.auth.entity.GuestAccessToken) tokens.get(0)).tokenHash;
-        String url = frontendUrl + "/acesso?token=" + rawHashToken;
-
-        byte[] png = qrCodeService.generateQrCodePng(url);
-        return Response.ok(png)
-                .header("Content-Disposition", "attachment; filename=\"qr-" + guestId + ".png\"")
-                .build();
-    }
-
-    @GET
-    @Path("/qr-codes/export")
-    @Produces("application/zip")
-    @Transactional
-    public Response exportQrCodes(@QueryParam("eventId") String eventId) {
-        Event event = loadEvent(eventId);
-        List<Guest> guests = Guest.find("event.id = ?1 ORDER BY name ASC", event.id).list();
-
-        StreamingOutput stream = out -> {
-            try (ZipOutputStream zip = new ZipOutputStream(out)) {
-                for (Guest guest : guests) {
-                    var tokenOpt = br.com.casamento.auth.entity.GuestAccessToken.find(
-                            "guest = ?1 AND revoked = false", guest).firstResultOptional();
-                    if (tokenOpt.isEmpty()) continue;
-
-                    String tokenHash = ((br.com.casamento.auth.entity.GuestAccessToken) tokenOpt.get()).tokenHash;
-                    String url = frontendUrl + "/acesso?token=" + tokenHash;
-                    byte[] png = qrCodeService.generateQrCodePng(url);
-
-                    String safeName = guest.name.replaceAll("[^a-zA-Z0-9\\-_]", "_");
-                    zip.putNextEntry(new ZipEntry("qr-" + safeName + "-" + guest.id + ".png"));
-                    zip.write(png);
-                    zip.closeEntry();
-                }
-            }
-        };
-
-        return Response.ok(stream)
-                .header("Content-Disposition", "attachment; filename=\"qrcodes.zip\"")
-                .build();
     }
 
     private Event loadEvent(String eventId) {

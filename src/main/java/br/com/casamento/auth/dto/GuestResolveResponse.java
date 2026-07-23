@@ -7,6 +7,8 @@ public record GuestResolveResponse(
         String eventId,
         String displayName,
         boolean requiresProfileCompletion,
+        /** Raw guest access token – only present after a successful OTP verify. */
+        String accessToken,
         EventSummary event
 ) {
     public record EventSummary(

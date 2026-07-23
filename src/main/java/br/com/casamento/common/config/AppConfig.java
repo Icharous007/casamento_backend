@@ -19,8 +19,6 @@ public interface AppConfig {
 
     R2Config r2();
 
-    EmailConfig email();
-
     RateLimitConfig rateLimit();
 
     JobsConfig jobs();
@@ -33,16 +31,9 @@ public interface AppConfig {
         String region();
     }
 
-    interface EmailConfig {
-        @WithName("daily-limit") int dailyLimit();
-        @WithName("batch-size") int batchSize();
-        @WithName("max-retries") int maxRetries();
-    }
-
     interface RateLimitConfig {
         @WithName("guest-resolve") int guestResolve();
         @WithName("admin-login") int adminLogin();
-        @WithName("forgot-password") int forgotPassword();
     }
 
     interface JobsConfig {

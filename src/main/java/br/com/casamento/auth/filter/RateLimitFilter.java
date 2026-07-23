@@ -36,9 +36,6 @@ public class RateLimitFilter implements ContainerRequestFilter {
     @ConfigProperty(name = "app.rate-limit.admin-login", defaultValue = "10")
     int adminLoginLimit;
 
-    @ConfigProperty(name = "app.rate-limit.forgot-password", defaultValue = "5")
-    int forgotPasswordLimit;
-
     @Override
     public void filter(ContainerRequestContext ctx) {
         String path = ctx.getUriInfo().getPath();
@@ -63,9 +60,8 @@ public class RateLimitFilter implements ContainerRequestFilter {
     }
 
     private int resolveLimit(String path) {
-        if (path.contains("guest-access/resolve")) return guestResolveLimit;
+        if (path.contains("guest-access/register")) return guestResolveLimit;
         if (path.contains("admin/auth/login")) return adminLoginLimit;
-        if (path.contains("forgot-password")) return forgotPasswordLimit;
         return 60;
     }
 

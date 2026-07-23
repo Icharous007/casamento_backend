@@ -6,6 +6,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
@@ -21,21 +22,27 @@ public class R2StorageService {
 
     private final S3Client s3;
     private final String bucket;
+    private final String publicBaseUrl;
 
     public R2StorageService(
             @ConfigProperty(name = "app.r2.endpoint") String endpoint,
             @ConfigProperty(name = "app.r2.access-key") String accessKey,
             @ConfigProperty(name = "app.r2.secret-key") String secretKey,
             @ConfigProperty(name = "app.r2.bucket") String bucket,
-            @ConfigProperty(name = "app.r2.region", defaultValue = "auto") String region
+        @ConfigProperty(name = "app.r2.region", defaultValue = "auto") String region,
+        @ConfigProperty(name = "app.r2.public-base-url", defaultValue = "") String publicBaseUrl
     ) {
         this.bucket = bucket;
+    this.publicBaseUrl = normalizePublicBaseUrl(publicBaseUrl);
         this.s3 = S3Client.builder()
                 .endpointOverride(URI.create(endpoint))
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(accessKey, secretKey)))
                 .region(Region.of(region))
-                .forcePathStyle(true) // required for MinIO / R2
+        .serviceConfiguration(S3Configuration.builder()
+            .pathStyleAccessEnabled(true)
+            .chunkedEncodingEnabled(false)
+            .build())
                 .build();
     }
 
@@ -70,8 +77,27 @@ public class R2StorageService {
      * or when using a custom domain. Falls back to pre-signed URL pattern if needed.
      */
     public String publicUrl(String key) {
-        // In production, R2 public bucket URL or CDN domain should be injected.
-        // For now, return the S3-path URL so the frontend can construct download links.
+        if (publicBaseUrl != null) {
+            return publicBaseUrl + "/" + key;
+        }
+
         return s3.utilities().getUrl(b -> b.bucket(bucket).key(key)).toString();
+    }
+
+    private String normalizePublicBaseUrl(String configuredValue) {
+        if (configuredValue == null) {
+            return null;
+        }
+
+        String trimmed = configuredValue.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+
+        return trimmed;
     }
 }

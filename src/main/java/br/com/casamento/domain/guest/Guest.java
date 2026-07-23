@@ -25,6 +25,13 @@ public class Guest extends PanacheEntityBase {
     @Column(nullable = false, length = 20)
     public String status = "INVITED";
 
+    @Column(name = "phone_e164", length = 20)
+    public String phoneE164;
+
+    /** IMPORTED | SELF_REGISTERED */
+    @Column(nullable = false, length = 30)
+    public String source = "IMPORTED";
+
     @Column(name = "created_at", nullable = false, updatable = false)
     public OffsetDateTime createdAt;
 
@@ -40,5 +47,9 @@ public class Guest extends PanacheEntityBase {
     @PreUpdate
     void preUpdate() {
         updatedAt = OffsetDateTime.now();
+    }
+
+    public static Guest findByEventAndPhone(java.util.UUID eventId, String phoneE164) {
+        return find("event.id = ?1 AND phoneE164 = ?2", eventId, phoneE164).firstResult();
     }
 }

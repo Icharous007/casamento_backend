@@ -51,7 +51,7 @@ public class GuestMeResource {
         return Response.ok(Map.of(
                 "guestId", guest.id.toString(),
                 "displayName", displayName,
-                "email", profile != null && profile.email != null ? profile.email : "",
+                "phone", guest.phoneE164 != null ? guest.phoneE164 : "",
                 "rsvpStatus", rsvpStatus,
                 "event", Map.of(
                         "title", event.title,
