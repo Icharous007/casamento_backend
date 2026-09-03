@@ -16,7 +16,7 @@ stop-db: ## Para os containers de banco
 	docker compose down
 
 dev-backend: ## Inicia Quarkus em modo dev (hot reload)
-	$(MVN) quarkus:dev -Dquarkus.profile=dev
+	set -a; [ -f .env ] && . ./.env; set +a; $(MVN) quarkus:dev -Dquarkus.profile=$${QUARKUS_PROFILE:-dev}
 
 test: ## Executa todos os testes
 	$(MVN) test -Dquarkus.profile=test

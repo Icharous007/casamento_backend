@@ -49,6 +49,7 @@ O frontend deve ler `event` (slug) da query string.
 | `acceptedTerms` | boolean | ✅ | Deve ser `true` para prosseguir |
 
 **Response 200 — acesso concedido imediatamente, sem OTP:**
+
 ```json
 {
   "guestId": "uuid-do-convidado",
@@ -68,11 +69,14 @@ O frontend deve ler `event` (slug) da query string.
 ```
 
 **Importante:**
+
 - Salvar `accessToken` (ex: `localStorage` ou cookie httpOnly).
 - Enviar em **todas** as chamadas autenticadas no header:
+
   ```
   X-Guest-Access-Token: <accessToken>
   ```
+
 - Após o cadastro, redirecionar diretamente para a área do convidado (RSVP, Presentes, Mural, Galeria) — não há mais tela de código OTP nem tela intermediária de "completar perfil".
 
 **Mesmo telefone retornando:** se o convidado já existe (mesmo `eventSlug` + `phone`), o backend apenas atualiza o `displayName` (se diferente) e retorna um novo `accessToken`. Não há erro de "já cadastrado".
