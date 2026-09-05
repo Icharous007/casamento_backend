@@ -20,6 +20,10 @@
         <zxing.version>3.5.3</zxing.version>
         <poi.version>5.4.0</poi.version>
         <opencsv.version>5.9</opencsv.version>
+        <javacv.version>1.5.10</javacv.version>
+        <ffmpeg-platform.version>6.1.1-1.5.10</ffmpeg-platform.version>
+        <!-- Override with -Djavacpp.platform=linux-x86_64 in the prod/Docker build
+             so mac/windows ffmpeg natives aren't bundled in the deployed jar. -->
     </properties>
 
     <dependencyManagement>
@@ -93,6 +97,18 @@
             <groupId>org.mnode.ical4j</groupId>
             <artifactId>ical4j</artifactId>
             <version>${ical4j.version}</version>
+        </dependency>
+
+        <!-- JavaCV/ffmpeg for video poster extraction (embeds native ffmpeg, no OS install needed) -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacv</artifactId>
+            <version>${javacv.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg-platform</artifactId>
+            <version>${ffmpeg-platform.version}</version>
         </dependency>
 
         <!-- ZXing for QR code generation -->

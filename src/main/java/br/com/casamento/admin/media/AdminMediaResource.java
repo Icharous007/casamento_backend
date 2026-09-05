@@ -43,6 +43,19 @@ public class AdminMediaResource {
         return Response.ok().build();
     }
 
+    @POST
+    @Path("/backfill-variants")
+    @Transactional
+    @RolesAllowed("ADMIN")
+    public Response backfillVariants(
+            @QueryParam("eventId") String eventId,
+            @QueryParam("limit") @DefaultValue("50") int limit
+    ) {
+        Event event = loadEvent(eventId);
+        int processed = mediaService.backfillVariants(event.id, limit);
+        return Response.ok(java.util.Map.of("processed", processed)).build();
+    }
+
     @DELETE
     @Path("/{mediaId}")
     @Transactional

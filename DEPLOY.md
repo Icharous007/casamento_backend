@@ -169,7 +169,9 @@ JOB_SECRET=segredo-jobs-prod-mudar
 
 ```bash
 # Build do JAR
-./mvnw package -Pnative=false -DskipTests
+# -Djavacpp.platform=linux-x86_64 evita empacotar os binários nativos de
+# ffmpeg para mac/windows (usados só em dev), mantendo a imagem menor.
+./mvnw package -Pnative=false -DskipTests -Djavacpp.platform=linux-x86_64
 
 # Build da imagem Docker JVM
 docker build -f src/main/docker/Dockerfile.jvm \

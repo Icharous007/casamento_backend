@@ -7,6 +7,7 @@ import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import jakarta.ws.rs.ext.Provider;
+import io.vertx.core.http.HttpClosedException;
 import org.jboss.logging.Logger;
 import org.jboss.logging.MDC;
 
@@ -22,6 +23,11 @@ public class GlobalExceptionMapper implements ExceptionMapper<Throwable> {
     @Override
     public Response toResponse(Throwable exception) {
         String traceId = (String) MDC.get(TraceIdFilter.TRACE_ID_KEY);
+
+        if (hasCause(exception, HttpClosedException.class)) {
+            LOG.debugf("Client disconnected before the request body was fully read [traceId=%s]", traceId);
+            return Response.status(499).build();
+        }
 
         if (exception instanceof AppException appEx) {
             return Response.status(appEx.getStatus())
@@ -55,6 +61,17 @@ public class GlobalExceptionMapper implements ExceptionMapper<Throwable> {
         return Response.status(500)
                 .entity(new ErrorResponse("INTERNAL_ERROR", "Erro interno do servidor", traceId))
                 .build();
+    }
+
+    private boolean hasCause(Throwable exception, Class<? extends Throwable> causeType) {
+        Throwable current = exception;
+        while (current != null) {
+            if (causeType.isInstance(current)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String mapHttpStatusToCode(int status) {

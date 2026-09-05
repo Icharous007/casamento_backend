@@ -35,6 +35,9 @@ public class MediaAsset extends PanacheEntityBase {
     @Column(name = "r2_thumb_key", length = 500)
     public String r2ThumbKey;
 
+    @Column(name = "r2_display_key", length = 500)
+    public String r2DisplayKey;
+
     @Column(name = "original_filename", length = 255)
     public String originalFilename;
 

@@ -16,7 +16,6 @@ import jakarta.ws.rs.core.Response;
 import org.jboss.resteasy.reactive.multipart.FileUpload;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
@@ -49,11 +48,9 @@ public class GuestMediaResource {
         String contentType = file.contentType() != null
                 ? file.contentType()
                 : "application/octet-stream";
-        try (InputStream is = Files.newInputStream(file.filePath())) {
-            MediaItemResponse response = mediaService.upload(
-                    guest, file.fileName(), contentType, size, is);
-            return Response.status(Response.Status.CREATED).entity(response).build();
-        }
+        MediaItemResponse response = mediaService.upload(
+                guest, file.fileName(), contentType, size, file.filePath());
+        return Response.status(Response.Status.CREATED).entity(response).build();
     }
 
     @GET
@@ -61,7 +58,7 @@ public class GuestMediaResource {
     public Response gallery(
             @QueryParam("sort") @DefaultValue("recent") String sort,
             @QueryParam("page") @DefaultValue("1") int page,
-            @QueryParam("pageSize") @DefaultValue("20") int pageSize
+            @QueryParam("pageSize") @DefaultValue("12") int pageSize
     ) {
         Guest guest = guestContext.getGuest();
         Map<String, Object> result = mediaService.listGallery(

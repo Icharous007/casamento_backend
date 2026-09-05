@@ -8,8 +8,10 @@ import jakarta.validation.Validator;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
+import io.vertx.core.http.HttpClosedException;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -62,6 +64,16 @@ class GlobalExceptionMapperTest {
         assertEquals("INTERNAL_ERROR", body.code);
         assertEquals("Erro interno do servidor", body.message);
         assertNotEquals("segredo interno", body.message);
+    }
+
+    @Test
+    void shouldHandleClosedClientConnectionWithoutInternalError() {
+        Response response = mapper.toResponse(
+                new IOException(new IOException(new HttpClosedException("Connection was closed")))
+        );
+
+        assertEquals(499, response.getStatus());
+        assertNull(response.getEntity());
     }
 
     static class Payload {

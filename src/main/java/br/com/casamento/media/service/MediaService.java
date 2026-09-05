@@ -13,16 +13,26 @@ import br.com.casamento.storage.R2StorageService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import org.jboss.logging.Logger;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @ApplicationScoped
 public class MediaService {
+
+    private static final Logger LOG = Logger.getLogger(MediaService.class);
 
     private static final long MAX_PHOTO_BYTES = 10 * 1024 * 1024L;  // 10 MB
     private static final long MAX_VIDEO_BYTES = 50 * 1024 * 1024L;  // 50 MB
@@ -30,22 +40,28 @@ public class MediaService {
             "image/jpeg", "image/png", "image/heic", "image/heif");
     private static final Set<String> ALLOWED_VIDEO_TYPES = Set.of(
             "video/mp4", "video/quicktime", "video/webm");
+    private static final int MAX_PAGE_SIZE = 24;
 
     @Inject
     R2StorageService r2;
+
+    @Inject
+    MediaVariantService variantService;
 
     // ── Upload ──────────────────────────────────────────────────────────────
 
     @Transactional
     public MediaItemResponse upload(Guest guest, String filename, String contentType,
-                                    long fileSize, InputStream data) {
+                                    long fileSize, Path filePath) throws IOException {
         String mediaType = detectMediaType(contentType, fileSize);
 
         UUID mediaId = UUID.randomUUID();
         String ext = extensionFor(contentType);
         String r2Key = buildKey(guest.event.id, guest.id, mediaId, mediaType, ext);
 
-        r2.upload(r2Key, data, fileSize, contentType);
+        try (InputStream data = Files.newInputStream(filePath)) {
+            r2.upload(r2Key, data, fileSize, contentType);
+        }
 
         MediaAsset asset = new MediaAsset();
         asset.event = guest.event;
@@ -57,10 +73,28 @@ public class MediaService {
         asset.fileSizeBytes = fileSize;
         asset.status = "ACTIVE";
         asset.id = mediaId;
+
+        Optional<MediaVariantService.Variants> variants = "PHOTO".equals(mediaType)
+                ? variantService.generatePhotoVariants(filePath, contentType)
+                : variantService.generateVideoPoster(filePath);
+        variants.ifPresent(v -> uploadVariants(asset, v));
+
         asset.persist();
 
         String url = r2.publicUrl(r2Key);
-        return MediaItemResponse.from(asset, url, null, false);
+        String thumb = asset.r2ThumbKey != null ? r2.publicUrl(asset.r2ThumbKey) : null;
+        String display = asset.r2DisplayKey != null ? r2.publicUrl(asset.r2DisplayKey) : null;
+        return MediaItemResponse.from(asset, url, thumb, display, false);
+    }
+
+    private void uploadVariants(MediaAsset asset, MediaVariantService.Variants v) {
+        UUID folderId = asset.guest != null ? asset.guest.id : asset.id;
+        String thumbKey = buildVariantKey(asset.event.id, folderId, asset.id, "thumbs");
+        String displayKey = buildVariantKey(asset.event.id, folderId, asset.id, "display");
+        r2.upload(thumbKey, new ByteArrayInputStream(v.thumbnail()), v.thumbnail().length, "image/jpeg");
+        r2.upload(displayKey, new ByteArrayInputStream(v.display()), v.display().length, "image/jpeg");
+        asset.r2ThumbKey = thumbKey;
+        asset.r2DisplayKey = displayKey;
     }
 
     // ── Gallery (guest) ─────────────────────────────────────────────────────
@@ -68,29 +102,46 @@ public class MediaService {
     public Map<String, Object> listGallery(Event event, Guest guest, String sort,
                                            int page, int pageSize) {
         if (event.galleryHideAt != null && OffsetDateTime.now().isAfter(event.galleryHideAt)) {
-            return Map.of("items", List.of(), "galleryHidden", true, "total", 0);
+            return Map.of("items", List.of(), "galleryHidden", true, "total", 0,
+                    "page", Math.max(1, page), "pageSize", pageSize, "hasMore", false);
         }
 
-        String orderBy = "top".equals(sort)
-                ? "likeCount DESC, createdAt DESC"
-                : "createdAt DESC";
+        int safePage = Math.max(1, page);
+        int safePageSize = Math.min(Math.max(1, pageSize), MAX_PAGE_SIZE);
+
+        boolean popular = "popular".equals(sort) || "top".equals(sort);
+        String orderBy = popular ? "likeCount DESC, createdAt DESC" : "createdAt DESC";
 
         List<MediaAsset> assets = MediaAsset.find(
                 "event.id = ?1 AND status = 'ACTIVE' ORDER BY " + orderBy,
                 event.id
-        ).page(page - 1, pageSize).list();
+        ).page(safePage - 1, safePageSize).list();
 
         long total = MediaAsset.count("event.id = ?1 AND status = 'ACTIVE'", event.id);
 
+        Set<UUID> likedIds = likedMediaIds(assets, guest);
+
         List<MediaItemResponse> items = assets.stream().map(a -> {
-            boolean liked = MediaLike.existsByMediaAndGuest(a, guest);
+            boolean liked = likedIds.contains(a.id);
             String url = r2.publicUrl(a.r2Key);
             String thumb = a.r2ThumbKey != null ? r2.publicUrl(a.r2ThumbKey) : null;
-            return MediaItemResponse.from(a, url, thumb, liked);
+            String display = a.r2DisplayKey != null ? r2.publicUrl(a.r2DisplayKey) : null;
+            return MediaItemResponse.from(a, url, thumb, display, liked);
         }).toList();
 
+        boolean hasMore = (long) safePage * safePageSize < total;
+
         return Map.of("items", items, "galleryHidden", false,
-                "page", page, "pageSize", pageSize, "total", total);
+                "page", safePage, "pageSize", safePageSize, "total", total, "hasMore", hasMore);
+    }
+
+    private Set<UUID> likedMediaIds(List<MediaAsset> assets, Guest guest) {
+        if (assets.isEmpty()) {
+            return Set.of();
+        }
+        List<UUID> assetIds = assets.stream().map(a -> a.id).toList();
+        return new HashSet<>(MediaLike.find("media.id IN ?1 AND guest = ?2", assetIds, guest)
+                .<MediaLike>list().stream().map(l -> l.media.id).collect(Collectors.toSet()));
     }
 
     // ── Likes ────────────────────────────────────────────────────────────────
@@ -187,8 +238,51 @@ public class MediaService {
         return assets.stream().map(a -> {
             String url = r2.publicUrl(a.r2Key);
             String thumb = a.r2ThumbKey != null ? r2.publicUrl(a.r2ThumbKey) : null;
-            return MediaItemResponse.from(a, url, thumb, false);
+            String display = a.r2DisplayKey != null ? r2.publicUrl(a.r2DisplayKey) : null;
+            return MediaItemResponse.from(a, url, thumb, display, false);
         }).toList();
+    }
+
+    /**
+     * Regenerates thumb/display variants for previously-uploaded assets that predate
+     * variant generation (r2ThumbKey still null). Downloads the original from R2,
+     * runs it through the same pipeline used at upload time, and re-uploads variants.
+     */
+    @Transactional
+    public int backfillVariants(UUID eventId, int limit) {
+        List<MediaAsset> assets = MediaAsset.find(
+                "event.id = ?1 AND status = 'ACTIVE' AND r2ThumbKey IS NULL ORDER BY createdAt ASC",
+                eventId
+        ).page(0, limit).list();
+
+        int processed = 0;
+        for (MediaAsset asset : assets) {
+            Path tempFile = null;
+            try {
+                tempFile = Files.createTempFile("backfill-", extensionFor(asset.contentType));
+                Files.write(tempFile, r2.download(asset.r2Key));
+
+                Optional<MediaVariantService.Variants> variants = "PHOTO".equals(asset.mediaType)
+                        ? variantService.generatePhotoVariants(tempFile, asset.contentType)
+                        : variantService.generateVideoPoster(tempFile);
+
+                if (variants.isPresent()) {
+                    uploadVariants(asset, variants.get());
+                    processed++;
+                }
+            } catch (Exception e) {
+                LOG.warnf(e, "Backfill failed for media %s", asset.id);
+            } finally {
+                if (tempFile != null) {
+                    try {
+                        Files.deleteIfExists(tempFile);
+                    } catch (IOException ignored) {
+                        // best effort cleanup
+                    }
+                }
+            }
+        }
+        return processed;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -225,5 +319,9 @@ public class MediaService {
     private String buildKey(UUID eventId, UUID guestId, UUID mediaId, String mediaType, String ext) {
         String folder = "PHOTO".equals(mediaType) ? "photos" : "videos";
         return "media/" + eventId + "/" + folder + "/" + guestId + "/" + mediaId + ext;
+    }
+
+    private String buildVariantKey(UUID eventId, UUID guestId, UUID mediaId, String variantFolder) {
+        return "media/" + eventId + "/" + variantFolder + "/" + guestId + "/" + mediaId + ".jpg";
     }
 }

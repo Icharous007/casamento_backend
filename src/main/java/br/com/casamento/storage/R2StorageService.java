@@ -73,6 +73,17 @@ public class R2StorageService {
     }
 
     /**
+     * Download the raw bytes of an object (used for variant backfill).
+     */
+    public byte[] download(String key) {
+        try (var response = s3.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build())) {
+            return response.readAllBytes();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("Failed to download object " + key, e);
+        }
+    }
+
+    /**
      * Build a public URL for an object. Works when R2 bucket has public access enabled
      * or when using a custom domain. Falls back to pre-signed URL pattern if needed.
      */
