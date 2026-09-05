@@ -9,6 +9,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
+import org.jboss.logging.Logger;
 
 import java.io.InputStream;
 import java.net.URI;
@@ -19,6 +20,8 @@ import java.net.URI;
  */
 @ApplicationScoped
 public class R2StorageService {
+
+    private static final Logger LOG = Logger.getLogger(R2StorageService.class);
 
     private final S3Client s3;
     private final String bucket;
@@ -50,15 +53,24 @@ public class R2StorageService {
      * Upload bytes to R2 and return the storage key.
      */
     public void upload(String key, InputStream data, long contentLength, String contentType) {
-        s3.putObject(
+        long startedAt = System.nanoTime();
+        try {
+            s3.putObject(
                 PutObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(key)
-                        .contentType(contentType)
-                        .contentLength(contentLength)
-                        .build(),
+                    .bucket(bucket)
+                    .key(key)
+                    .contentType(contentType)
+                    .contentLength(contentLength)
+                    .build(),
                 RequestBody.fromInputStream(data, contentLength)
-        );
+            );
+            LOG.infof("storage operation=upload contentType=%s bytes=%d durationMs=%d outcome=success",
+                contentType, contentLength, elapsedMs(startedAt));
+        } catch (RuntimeException exception) {
+            LOG.errorf(exception, "storage operation=upload contentType=%s bytes=%d durationMs=%d outcome=failure errorType=%s",
+                contentType, contentLength, elapsedMs(startedAt), exception.getClass().getSimpleName());
+            throw exception;
+        }
     }
 
     /**
@@ -76,11 +88,25 @@ public class R2StorageService {
      * Download the raw bytes of an object (used for variant backfill).
      */
     public byte[] download(String key) {
+        long startedAt = System.nanoTime();
         try (var response = s3.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build())) {
-            return response.readAllBytes();
+            byte[] bytes = response.readAllBytes();
+            LOG.infof("storage operation=download bytes=%d durationMs=%d outcome=success",
+                    bytes.length, elapsedMs(startedAt));
+            return bytes;
         } catch (java.io.IOException e) {
+            LOG.errorf(e, "storage operation=download durationMs=%d outcome=failure errorType=%s",
+                    elapsedMs(startedAt), e.getClass().getSimpleName());
             throw new RuntimeException("Failed to download object " + key, e);
+        } catch (RuntimeException exception) {
+            LOG.errorf(exception, "storage operation=download durationMs=%d outcome=failure errorType=%s",
+                    elapsedMs(startedAt), exception.getClass().getSimpleName());
+            throw exception;
         }
+    }
+
+    private long elapsedMs(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000;
     }
 
     /**

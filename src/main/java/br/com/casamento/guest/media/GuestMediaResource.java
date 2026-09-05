@@ -14,6 +14,9 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.resteasy.reactive.multipart.FileUpload;
+import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
+import br.com.casamento.common.filter.TraceIdFilter;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -25,6 +28,8 @@ import java.util.UUID;
 @Produces(MediaType.APPLICATION_JSON)
 @RequiresGuestToken
 public class GuestMediaResource {
+
+    private static final Logger LOG = Logger.getLogger(GuestMediaResource.class);
 
     @Inject
     GuestContext guestContext;
@@ -40,17 +45,31 @@ public class GuestMediaResource {
             @FormParam("file") FileUpload file
     ) throws IOException {
         if (file == null) {
+            LOG.infof("media_upload event=upload.failure stage=request errorCode=FILE_REQUIRED traceId=%s outcome=failure",
+                    traceId());
             throw br.com.casamento.common.exception.AppException
                     .badRequest("FILE_REQUIRED", "Arquivo é obrigatório.");
         }
         Guest guest = guestContext.getGuest();
-        long size = Files.size(file.filePath());
+        long size;
+        try {
+            size = Files.size(file.filePath());
+        } catch (IOException exception) {
+            LOG.errorf(exception, "media_upload event=upload.failure stage=request errorCode=FILE_READ_ERROR traceId=%s outcome=failure",
+                    traceId());
+            throw exception;
+        }
         String contentType = file.contentType() != null
                 ? file.contentType()
                 : "application/octet-stream";
         MediaItemResponse response = mediaService.upload(
                 guest, file.fileName(), contentType, size, file.filePath());
         return Response.status(Response.Status.CREATED).entity(response).build();
+    }
+
+    private String traceId() {
+        Object value = MDC.get(TraceIdFilter.TRACE_ID_KEY);
+        return value != null ? value.toString() : "none";
     }
 
     @GET

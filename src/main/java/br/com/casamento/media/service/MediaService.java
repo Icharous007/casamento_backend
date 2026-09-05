@@ -1,6 +1,7 @@
 package br.com.casamento.media.service;
 
 import br.com.casamento.common.exception.AppException;
+import br.com.casamento.common.filter.TraceIdFilter;
 import br.com.casamento.domain.event.Event;
 import br.com.casamento.domain.media.MediaAsset;
 import br.com.casamento.domain.media.MediaComment;
@@ -14,6 +15,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -53,14 +55,32 @@ public class MediaService {
     @Transactional
     public MediaItemResponse upload(Guest guest, String filename, String contentType,
                                     long fileSize, Path filePath) throws IOException {
-        String mediaType = detectMediaType(contentType, fileSize);
-
+        long startedAt = System.nanoTime();
         UUID mediaId = UUID.randomUUID();
+        logUpload("upload.start", guest, mediaId, contentType, fileSize, null, null);
+
+        String mediaType;
+        try {
+            mediaType = detectMediaType(contentType, fileSize);
+        } catch (AppException exception) {
+            logUploadFailure("validation", guest, mediaId, contentType, fileSize, exception.getCode(), startedAt);
+            throw exception;
+        }
+
         String ext = extensionFor(contentType);
         String r2Key = buildKey(guest.event.id, guest.id, mediaId, mediaType, ext);
 
         try (InputStream data = Files.newInputStream(filePath)) {
-            r2.upload(r2Key, data, fileSize, contentType);
+            long storageStartedAt = System.nanoTime();
+            try {
+                r2.upload(r2Key, data, fileSize, contentType);
+                logUpload("upload.original.success", guest, mediaId, contentType, fileSize,
+                        "storage", elapsedMs(storageStartedAt));
+            } catch (RuntimeException exception) {
+                logUploadFailure("storage", guest, mediaId, contentType, fileSize,
+                        "STORAGE_ERROR", startedAt);
+                throw exception;
+            }
         }
 
         MediaAsset asset = new MediaAsset();
@@ -77,14 +97,59 @@ public class MediaService {
         Optional<MediaVariantService.Variants> variants = "PHOTO".equals(mediaType)
                 ? variantService.generatePhotoVariants(filePath, contentType)
                 : variantService.generateVideoPoster(filePath);
-        variants.ifPresent(v -> uploadVariants(asset, v));
+        if (variants.isPresent()) {
+            long variantStartedAt = System.nanoTime();
+            try {
+                uploadVariants(asset, variants.get());
+                logUpload("upload.variants.success", guest, mediaId, contentType, fileSize,
+                        "variants", elapsedMs(variantStartedAt));
+            } catch (RuntimeException exception) {
+                logUploadFailure("variant-storage", guest, mediaId, contentType, fileSize,
+                        "VARIANT_STORAGE_ERROR", startedAt);
+                throw exception;
+            }
+        } else {
+            logUpload("upload.variants.degraded", guest, mediaId, contentType, fileSize,
+                    "variants", elapsedMs(startedAt));
+        }
 
         asset.persist();
 
         String url = r2.publicUrl(r2Key);
         String thumb = asset.r2ThumbKey != null ? r2.publicUrl(asset.r2ThumbKey) : null;
         String display = asset.r2DisplayKey != null ? r2.publicUrl(asset.r2DisplayKey) : null;
+        logUpload("upload.success", guest, mediaId, contentType, fileSize,
+                "persist", elapsedMs(startedAt));
         return MediaItemResponse.from(asset, url, thumb, display, false);
+    }
+
+    private void logUpload(String event, Guest guest, UUID mediaId, String contentType,
+                           long fileSize, String stage, Long durationMs) {
+        String outcome = "started";
+        if (event.endsWith("success")) {
+            outcome = "success";
+        } else if (event.endsWith("degraded")) {
+            outcome = "degraded";
+        }
+        LOG.infof("media_upload event=%s traceId=%s eventId=%s guestId=%s mediaId=%s contentType=%s fileSizeBytes=%d stage=%s durationMs=%s outcome=%s",
+                event, traceId(), guest.event.id, guest.id, mediaId, contentType, fileSize,
+            stage, durationMs, outcome);
+    }
+
+    private void logUploadFailure(String stage, Guest guest, UUID mediaId, String contentType,
+                                  long fileSize, String errorCode, long startedAt) {
+        LOG.errorf("media_upload event=upload.failure traceId=%s eventId=%s guestId=%s mediaId=%s contentType=%s fileSizeBytes=%d stage=%s durationMs=%d errorCode=%s outcome=failure",
+                traceId(), guest.event.id, guest.id, mediaId, contentType, fileSize, stage,
+                elapsedMs(startedAt), errorCode);
+    }
+
+    private String traceId() {
+        Object value = MDC.get(TraceIdFilter.TRACE_ID_KEY);
+        return value != null ? value.toString() : "none";
+    }
+
+    private long elapsedMs(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000;
     }
 
     private void uploadVariants(MediaAsset asset, MediaVariantService.Variants v) {
