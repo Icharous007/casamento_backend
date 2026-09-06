@@ -99,7 +99,8 @@
             <version>${ical4j.version}</version>
         </dependency>
 
-        <!-- JavaCV/ffmpeg for video poster extraction (embeds native ffmpeg, no OS install needed) -->
+        <!-- JavaCV/ffmpeg for video poster extraction + compression (embeds native ffmpeg, no OS install needed).
+             "-gpl" build bundles libx264/libx265 and the ffmpeg CLI binary needed for H.264 re-encoding. -->
         <dependency>
             <groupId>org.bytedeco</groupId>
             <artifactId>javacv</artifactId>
@@ -107,7 +108,7 @@
         </dependency>
         <dependency>
             <groupId>org.bytedeco</groupId>
-            <artifactId>ffmpeg-platform</artifactId>
+            <artifactId>ffmpeg-platform-gpl</artifactId>
             <version>${ffmpeg-platform.version}</version>
         </dependency>
 

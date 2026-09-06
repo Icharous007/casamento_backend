@@ -66,9 +66,9 @@ public class RateLimitFilter implements ContainerRequestFilter {
     }
 
     private String clientIp(ContainerRequestContext ctx) {
-        String forwarded = ctx.getHeaderString("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
+        String realIp = ctx.getHeaderString("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp;
         }
         return "unknown";
     }

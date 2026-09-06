@@ -38,6 +38,9 @@ public class MediaAsset extends PanacheEntityBase {
     @Column(name = "r2_display_key", length = 500)
     public String r2DisplayKey;
 
+    @Column(name = "r2_compressed_key", length = 500)
+    public String r2CompressedKey; // re-encoded H.264/AAC video, smaller than the raw original in r2Key
+
     @Column(name = "original_filename", length = 255)
     public String originalFilename;
 

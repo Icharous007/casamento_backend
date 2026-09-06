@@ -95,6 +95,8 @@ COPY --chown=185 target/quarkus-app/app/ /deployments/app/
 COPY --chown=185 target/quarkus-app/quarkus/ /deployments/quarkus/
 
 EXPOSE 8080
+HEALTHCHECK --interval=20s --timeout=5s --start-period=45s --retries=6 \
+	CMD curl --fail --silent http://127.0.0.1:8080/q/health/live || exit 1
 USER 185
 ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
 ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"

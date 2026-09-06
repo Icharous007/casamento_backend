@@ -39,7 +39,8 @@ import java.util.concurrent.TimeoutException;
  * Photos are resized with pure-Java ImageIO (no external dependency). Video posters use
  * JavaCV's embedded ffmpeg natives (no OS install required). HEIC photos fall back to the
  * same bundled ffmpeg binary on a best-effort basis; any failure degrades gracefully
- * (caller keeps serving the original file).
+ * (caller keeps serving the original file). Video compression shells out to the ffmpeg
+ * CLI bundled by the "-gpl" native artifact (needed for the libx264 encoder).
  */
 @ApplicationScoped
 public class MediaVariantService {
@@ -56,6 +57,8 @@ public class MediaVariantService {
     private static final float DISPLAY_QUALITY = 0.82f;
     private static final long POSTER_SEEK_MICROS = 500_000L; // ~0.5s in, avoids a black first frame
     private static final Set<String> HEIC_TYPES = Set.of("image/heic", "image/heif");
+    private static final int COMPRESS_MAX_WIDTH = 1280;
+    private static final int COMPRESS_TIMEOUT_SECONDS = 45;
 
     private final ExecutorService videoExecutor = Executors.newCachedThreadPool();
 
@@ -81,6 +84,37 @@ public class MediaVariantService {
             return Optional.of(new Variants(thumb, display));
         } catch (Exception e) {
             LOG.warnf(e, "Failed to generate photo variants for %s", filePath);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Re-encodes the video to H.264/AAC, scaled down to {@code COMPRESS_MAX_WIDTH} and with
+     * a modest CRF, standardizing the container to MP4 with a fast-start moov atom. Returns
+     * the path to a new temp file (caller is responsible for deleting it) or empty on any
+     * failure/timeout, in which case the caller should keep serving the original upload.
+     */
+    public Optional<Path> compressVideo(Path filePath) {
+        Path output = null;
+        try {
+            output = Files.createTempFile("media-compressed-", ".mp4");
+            List<String> command = List.of(
+                    resolveFfmpegBinary(), "-y", "-i", filePath.toString(),
+                    "-vf", "scale='min(" + COMPRESS_MAX_WIDTH + ",iw)':'-2'",
+                    "-c:v", "libx264", "-crf", "26", "-preset", "veryfast",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    output.toString());
+            boolean ok = runFfmpeg(command, COMPRESS_TIMEOUT_SECONDS);
+            if (!ok || Files.size(output) == 0) {
+                LOG.warnf("Video compression failed or timed out for %s", filePath);
+                deleteQuietly(output);
+                return Optional.empty();
+            }
+            return Optional.of(output);
+        } catch (Exception e) {
+            LOG.warnf(e, "Failed to compress video %s", filePath);
+            deleteQuietly(output);
             return Optional.empty();
         }
     }

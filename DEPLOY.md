@@ -1,423 +1,283 @@
-# Deploy Guide — LocalWeb VPS
+# Manual de deploy na Locaweb
 
-**Aplicação:** casamento-backend (Quarkus 3.36 / Java 21)  
-**Data:** 2026-07-13
+Este guia publica o frontend React/Vite e este backend Quarkus na mesma VPS Locaweb, com HTTPS gratuito.
 
----
+| Item | Endereco final |
+|---|---|
+| Site | `https://gustavoemalucasam.net.br` |
+| API | `https://gustavoemalucasam.net.br/api/v1` |
+| Saude interna | `http://127.0.0.1:8080/q/health/live` |
 
-## ⚠️ Aviso sobre os planos LocalWeb
+O Nginx recebe trafego publico nas portas 80/443, serve o frontend e encaminha `/api` ao Quarkus. Backend e PostgreSQL ficam privados em Docker; o frontend ja usa `/api/v1`, portanto nao ha CORS entre navegador e API em producao.
 
-O site da LocalWeb (localweb.com.br/vps) não pôde ser acessado automaticamente.  
-**Verifique os planos e preços atuais em:**  
-👉 https://www.localweb.com.br/vps/servidores-vps/
+## 1. Antes de contratar
 
----
+Contrate uma VPS Linux com Ubuntu LTS, IP publico, 2 vCPU, 4 GB RAM e 40 GB SSD. O minimo de 2 GB pode funcionar, mas nao e recomendado sem teste do pico de uploads e compressao de video. Escolha Ubuntu 24.04 LTS quando disponivel; 22.04 LTS tambem funciona.
 
-## 1. Plano recomendado (critério técnico)
+Voce precisa de acesso a Locaweb, ao DNS de `gustavoemalucasam.net.br`, aos repositorios backend e frontend e a uma conta Cloudflare R2 configurada conforme [R2_SETUP.md](R2_SETUP.md). Ative autenticacao de dois fatores na conta Locaweb.
 
-### Modo JVM (recomendado para produção inicial)
+Na maquina de desenvolvimento Linux, instale Git, Docker Engine, Java 21, Node.js 22 e pnpm. Na VPS nao e necessario Java ou Node: ela recebera a imagem Docker e o build estatico.
 
-Com base nos requisitos levantados (Quarkus JVM + PostgreSQL + POI + uploads de 55 MB):
+## 2. Criar VPS e acesso SSH
 
-| Recurso | Mínimo | Recomendado |
-|---|---|---|
-| **vCPU** | 1 | **2** |
-| **RAM** | 1 GB | **2 GB** |
-| **Disco SSD** | 20 GB | **40 GB** |
-| **OS** | Ubuntu 22.04 LTS | Ubuntu 22.04 LTS |
-| **Acesso** | Root SSH | Root SSH |
-
-> Procure o plano **VPS intermediário/médio** que ofereça 2 vCPU + 2 GB RAM.
-
-### Modo Native (menor consumo de memória)
-
-Se optar por build nativo (veja Seção 4):
-
-| Recurso | Mínimo | Recomendado |
-|---|---|---|
-| **vCPU** | 1 | 2 |
-| **RAM** | **512 MB** | **1 GB** |
-| **Disco SSD** | 10 GB | 20 GB |
-
-> Economia de ~60–70% de RAM. Ideal se quiser economizar no plano após os testes iniciais.
-
----
-
-## 2. Pré-requisitos no servidor
+1. Na Central do Cliente Locaweb, abra **Produtos** -> **Cloud Server/VPS** e crie/contrate uma VPS Linux com a configuracao acima.
+2. Anote IP publico, usuario e senha inicial. Confirme no painel que nao ha bloqueio adicional para portas 80/443.
+3. Na maquina local, crie a chave SSH e cadastre o conteudo de `~/.ssh/id_ed25519.pub` no painel, ou copie-a uma unica vez com a senha inicial:
 
 ```bash
-# Atualizar o sistema
-sudo apt update && sudo apt upgrade -y
-
-# Instalar Docker (para modo JVM em container ou build nativo)
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-
-# Instalar Docker Compose
-sudo apt install -y docker-compose-plugin
-
-# Instalar PostgreSQL 16 (se não usar container)
-sudo apt install -y postgresql-16 postgresql-client-16
-
-# Java 21 (apenas para modo JVM sem container)
-sudo apt install -y openjdk-21-jre-headless
-java -version  # deve mostrar OpenJDK 21
-
-# Nginx (reverse proxy)
-sudo apt install -y nginx
-sudo systemctl enable nginx
+ssh-keygen -t ed25519 -C "casamento-locaweb"
+ssh-copy-id root@IP_DA_VPS
+ssh root@IP_DA_VPS
 ```
 
----
-
-## 3. Deploy Modo JVM (com Docker Compose)
-
-Esta é a forma mais simples e robusta para a LocalWeb VPS.
-
-### 3.1 Estrutura de arquivos no servidor
-
-```
-/opt/casamento/
-├── docker-compose.yml
-├── .env
-└── keys/
-    ├── privateKey.pem
-    └── publicKey.pem
-```
-
-### 3.2 `docker-compose.yml` de produção
-
-Criar em `/opt/casamento/docker-compose.yml`:
-
-```yaml
-version: "3.9"
-
-services:
-
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: casamento
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  app:
-    image: casamento-backend:latest
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DB_URL: jdbc:postgresql://db:5432/casamento
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_ISSUER: ${JWT_ISSUER}
-      APP_FRONTEND_URL: ${APP_FRONTEND_URL}
-      APP_BASE_URL: ${APP_BASE_URL}
-      R2_ENDPOINT: ${R2_ENDPOINT}
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
-      R2_SECRET_KEY: ${R2_SECRET_KEY}
-      R2_BUCKET: ${R2_BUCKET}
-      R2_REGION: ${R2_REGION}
-      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-      JOB_SECRET: ${JOB_SECRET}
-      JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseG1GC"
-    volumes:
-      - ./keys:/deployments/keys:ro
-    ports:
-      - "127.0.0.1:8080:8080"
-
-volumes:
-  pg_data:
-```
-
-### 3.3 Arquivo `.env`
-
-Criar em `/opt/casamento/.env` (permissões 600):
+4. Na VPS, crie uma conta administrativa. Troque `SEU_USUARIO` pelo seu login:
 
 ```bash
+apt update && apt upgrade -y
+adduser SEU_USUARIO
+usermod -aG sudo SEU_USUARIO
+mkdir -p /home/SEU_USUARIO/.ssh
+cp /root/.ssh/authorized_keys /home/SEU_USUARIO/.ssh/
+chown -R SEU_USUARIO:SEU_USUARIO /home/SEU_USUARIO/.ssh
+chmod 700 /home/SEU_USUARIO/.ssh
+chmod 600 /home/SEU_USUARIO/.ssh/authorized_keys
+```
+
+5. Em um segundo terminal, confirme `ssh SEU_USUARIO@IP_DA_VPS` antes de fechar a sessao root. Na Locaweb, gere um snapshot antes do primeiro deploy e antes de atualizacoes de risco. Snapshot nao substitui backup externo.
+
+## 3. Apontar DNS
+
+No provedor que controla os nameservers do dominio, crie este registro:
+
+| Tipo | Nome | Valor |
+|---|---|---|
+| `A` | `@` | `IP_DA_VPS` |
+
+Se o DNS estiver na Locaweb: Painel de Hospedagem -> dominio -> menu de tres pontos -> **Zona de DNS** -> **Adicionar entrada**. Aguarde a propagacao, que pode levar 4 a 24 horas:
+
+```bash
+dig +short gustavoemalucasam.net.br A
+```
+
+O resultado precisa ser o IP da VPS antes de emitir o certificado.
+
+## 4. Instalar dependencias da VPS
+
+Entre com a conta administrativa e execute:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2 nginx certbot python3-certbot-nginx ufw rclone curl
+sudo systemctl enable --now docker nginx
+sudo usermod -aG docker "$USER"
+```
+
+Saia e entre novamente. Valide com `docker --version`, `docker compose version`, `nginx -v` e `certbot --version`.
+
+Configure o firewall apenas depois de testar o SSH por chave:
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+sudo ufw status verbose
+```
+
+Nunca abra as portas 5432 ou 8080 ao publico.
+
+## 5. Preparar arquivos e segredos
+
+No repositorio backend local, envie os modelos de deploy:
+
+```bash
+rsync -av deploy/ SEU_USUARIO@IP_DA_VPS:/tmp/casamento-deploy/
+```
+
+Na VPS:
+
+```bash
+sudo mkdir -p /opt/casamento/{keys,releases,backups}
+sudo cp /tmp/casamento-deploy/docker-compose.prod.yml /opt/casamento/
+sudo install -m 750 /tmp/casamento-deploy/deploy-backend.sh /opt/casamento/
+sudo install -m 750 /tmp/casamento-deploy/backup-postgres.sh /opt/casamento/
+sudo chown -R "$USER":"$USER" /opt/casamento
+cp /tmp/casamento-deploy/.env.production.example /opt/casamento/.env
 chmod 600 /opt/casamento/.env
 ```
 
-Conteúdo:
+Edite `/opt/casamento/.env` com `nano`; substitua todos os valores `REPLACE_WITH_...`. Gere segredos com `openssl rand -base64 32`. O arquivo nao pode ir para o Git.
+
+Mantenha estas URLs exatamente assim:
+
 ```env
-DB_USERNAME=casamento
-DB_PASSWORD=SenhaForteAqui123!
-JWT_ISSUER=https://seudominio.com.br
-APP_FRONTEND_URL=https://seudominio.com.br
-APP_BASE_URL=https://api.seudominio.com.br
-R2_ENDPOINT=https://SEU_ACCOUNT_ID.r2.cloudflarestorage.com
-R2_ACCESS_KEY=sua_access_key
-R2_SECRET_KEY=sua_secret_key
-R2_BUCKET=casamento-media-prod
-R2_REGION=auto
-R2_PUBLIC_BASE_URL=https://media.seudominio.com.br
-CORS_ALLOWED_ORIGINS=https://seudominio.com.br
-JOB_SECRET=segredo-jobs-prod-mudar
+JWT_ISSUER=https://gustavoemalucasam.net.br
+APP_BASE_URL=https://gustavoemalucasam.net.br
+APP_FRONTEND_URL=https://gustavoemalucasam.net.br
+CORS_ALLOWED_ORIGINS=https://gustavoemalucasam.net.br
 ```
 
-### 3.4 Build e push da imagem (executar na máquina de desenvolvimento)
+Gere as chaves JWT uma vez na VPS:
 
 ```bash
-# Build do JAR
-# -Djavacpp.platform=linux-x86_64 evita empacotar os binários nativos de
-# ffmpeg para mac/windows (usados só em dev), mantendo a imagem menor.
-./mvnw package -Pnative=false -DskipTests -Djavacpp.platform=linux-x86_64
-
-# Build da imagem Docker JVM
-docker build -f src/main/docker/Dockerfile.jvm \
-  -t casamento-backend:latest .
-
-# Salvar a imagem em arquivo para envio
-docker save casamento-backend:latest | gzip > casamento-backend.tar.gz
-
-# Enviar para o servidor
-scp casamento-backend.tar.gz usuario@IP_DO_SERVIDOR:/opt/casamento/
+cd /opt/casamento/keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out privateKey.pem
+openssl rsa -pubout -in privateKey.pem -out publicKey.pem
+chmod 600 privateKey.pem
+chmod 644 publicKey.pem
 ```
 
-### 3.5 Carregar e iniciar no servidor
+## 6. Criar e publicar imagem Docker do backend
+
+Execute na maquina de desenvolvimento, dentro de `casamento_backend`, nunca na VPS. O modo JVM e o recomendado inicialmente.
 
 ```bash
-# No servidor
-cd /opt/casamento
-
-# Carregar imagem
-docker load < casamento-backend.tar.gz
-
-# Iniciar
-docker compose up -d
-
-# Verificar logs
-docker compose logs -f app
+./mvnw -q -DskipTests clean package -Djavacpp.platform=linux-x86_64
+VERSION=$(date -u +%Y%m%dT%H%M%SZ)
+docker build -f src/main/docker/Dockerfile.jvm -t "casamento-backend:${VERSION}" .
+docker image inspect "casamento-backend:${VERSION}" --format '{{.Id}}'
+docker save "casamento-backend:${VERSION}" | gzip > "casamento-backend-${VERSION}.tar.gz"
+sha256sum "casamento-backend-${VERSION}.tar.gz" > "casamento-backend-${VERSION}.tar.gz.sha256"
 ```
 
----
-
-## 4. Deploy Modo Native (menor consumo de RAM)
-
-> **Atenção:** O build nativo requer ~4–6 GB de RAM e 30+ minutos.  
-> Deve ser feito na máquina de desenvolvimento (Linux x86_64), **não** no servidor VPS.
-
-### 4.1 Pré-requisitos de build (máquina Linux de desenvolvimento)
+O parametro `-Djavacpp.platform=linux-x86_64` inclui somente binarios ffmpeg Linux. O Dockerfile copia `target/quarkus-app/` para a imagem. Antes de enviar, execute:
 
 ```bash
-# Instalar Docker (necessário para build nativo sem GraalVM local)
-sudo apt install -y docker.io
+./mvnw -q -DskipTests compile
+bash -n deploy/deploy-backend.sh deploy/backup-postgres.sh
 ```
 
-### 4.2 Comando de build nativo via container (sem instalar GraalVM)
+Envie e publique a mesma imagem validada:
 
 ```bash
-# Dentro do projeto (Linux x86_64)
-./mvnw package -Pnative \
-  -Dquarkus.native.container-build=true \
-  -DskipTests
-
-# O binário será gerado em:
-# target/casamento-backend-1.0.0-SNAPSHOT-runner
-```
-
-> O Quarkus usa automaticamente a imagem `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21` para compilar dentro de um container Docker — nenhum GraalVM precisa ser instalado localmente.
-
-### 4.3 Limitação importante para este projeto
-
-Antes de usar em produção, **teste as seguintes funcionalidades** no modo nativo:
-
-| Funcionalidade | Risco no modo nativo |
-|---|---|
-| Apache POI (importação Excel) | ⚠️ Suporte parcial — testar com `./mvnw verify -Pnative` |
-| iCal4j | ⚠️ Reflexão dinâmica — pode precisar de hints |
-| ZXing (QR Code) | ✅ Funciona normalmente |
-| OpenCSV | ✅ Funciona normalmente |
-| AWS SDK v2 | ✅ Suportado com hints automáticos do Quarkus |
-
-Se o POI falhar em modo nativo, adicionar em `src/main/resources/application.properties`:
-```properties
-quarkus.native.additional-build-args=--report-unsupported-elements-at-runtime
-```
-
-### 4.4 Build da imagem Docker nativa
-
-```bash
-# Após o build nativo
-docker build -f src/main/docker/Dockerfile.native-micro \
-  -t casamento-backend-native:latest .
-
-# Salvar e enviar (< 100 MB vs ~400 MB do JVM)
-docker save casamento-backend-native:latest | gzip > casamento-backend-native.tar.gz
-scp casamento-backend-native.tar.gz usuario@IP_DO_SERVIDOR:/opt/casamento/
-```
-
-### 4.5 `docker-compose.yml` para modo nativo
-
-Apenas mude a imagem no `docker-compose.yml`:
-```yaml
-  app:
-    image: casamento-backend-native:latest  # ← trocar esta linha
-    # ... resto igual
-    environment:
-      JAVA_OPTS: ""  # ← remover — executável nativo não usa JVM
-```
-
----
-
-## 5. Nginx como reverse proxy (HTTPS)
-
-### 5.1 Instalar Certbot (SSL gratuito Let's Encrypt)
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d api.seudominio.com.br
-```
-
-### 5.2 `/etc/nginx/sites-available/casamento`
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name api.seudominio.com.br;
-
-    ssl_certificate     /etc/letsencrypt/live/api.seudominio.com.br/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.seudominio.com.br/privkey.pem;
-
-    # Tamanho máximo para upload de mídia (55 MB)
-    client_max_body_size 60M;
-
-    # Timeout para uploads de vídeo
-    proxy_read_timeout 120s;
-    proxy_send_timeout 120s;
-
-    location / {
-        proxy_pass         http://127.0.0.1:8080;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $remote_addr;
-        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-}
-
-server {
-    listen 80;
-    server_name api.seudominio.com.br;
-    return 301 https://$host$request_uri;
-}
+scp "casamento-backend-${VERSION}.tar.gz" "casamento-backend-${VERSION}.tar.gz.sha256" SEU_USUARIO@IP_DA_VPS:/opt/casamento/releases/
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/casamento /etc/nginx/sites-enabled/
+cd /opt/casamento/releases
+sha256sum -c "casamento-backend-${VERSION}.tar.gz.sha256"
+sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=casamento-backend:${VERSION}|" /opt/casamento/.env
+/opt/casamento/deploy-backend.sh "/opt/casamento/releases/casamento-backend-${VERSION}.tar.gz"
+docker compose --env-file /opt/casamento/.env -f /opt/casamento/docker-compose.prod.yml ps
+curl -fsS http://127.0.0.1:8080/q/health/live
+```
+
+O primeiro inicio cria o banco e executa Flyway. Em falha: `docker compose --env-file /opt/casamento/.env -f /opt/casamento/docker-compose.prod.yml logs --tail=150 app`.
+
+## 7. Publicar frontend
+
+No repositorio `/home/wsl/sistemas/casemento_frontend-`, crie `.env.production` apenas com valores publicos:
+
+```env
+VITE_API_BASE_URL=/api/v1
+VITE_EVENT_SLUG=casamento-2027
+VITE_APP_NAME=Casamento
+```
+
+Nao coloque chaves, senhas ou tokens em `VITE_*`: elas ficam publicas no JavaScript. Gere o build:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm build
+FRONTEND_VERSION=$(date -u +%Y%m%dT%H%M%SZ)
+ssh SEU_USUARIO@IP_DA_VPS "mkdir -p /var/www/casamento/releases/${FRONTEND_VERSION}"
+rsync -av --delete dist/ SEU_USUARIO@IP_DA_VPS:/var/www/casamento/releases/${FRONTEND_VERSION}/
+ssh SEU_USUARIO@IP_DA_VPS "ln -sfn /var/www/casamento/releases/${FRONTEND_VERSION} /var/www/casamento/current"
+```
+
+## 8. HTTPS gratuito e Nginx
+
+Instale primeiro o bloco HTTP temporario. Ele permite ao Let's Encrypt validar o dominio:
+
+```bash
+sudo cp /tmp/casamento-deploy/nginx/casamento-http.conf /etc/nginx/sites-available/casamento
+sudo ln -sfn /etc/nginx/sites-available/casamento /etc/nginx/sites-enabled/casamento
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
----
-
-## 6. Firewall
-
-Abrir portas essenciais para o backend acessível via HTTPS público:
+Emita o certificado gratuito com e-mail real:
 
 ```bash
-# UFW (Ubuntu Firewall)
-sudo ufw allow 22    # SSH
-sudo ufw allow 80    # HTTP (redirect)
-sudo ufw allow 443   # HTTPS
-sudo ufw enable
-
-# Verificar
-sudo ufw status
+sudo certbot certonly --webroot -w /var/www/casamento/current -d gustavoemalucasam.net.br --email SEU_EMAIL --agree-tos --no-eff-email
 ```
 
----
-
-## 7. Variáveis de ambiente críticas para produção
+Ative o Nginx definitivo somente apos a emissao:
 
 ```bash
-# Gerar par de chaves JWT RSA (executar uma vez)
-openssl genrsa -out privateKey.pem 2048
-openssl rsa -in privateKey.pem -pubout -out publicKey.pem
-
-# Copiar para o servidor
-scp privateKey.pem publicKey.pem usuario@IP:/opt/casamento/keys/
+sudo cp /tmp/casamento-deploy/nginx/casamento.conf /etc/nginx/sites-available/casamento
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl enable --now certbot.timer
+sudo certbot renew --dry-run
 ```
 
-No `.env`, ajustar:
-```env
-JWT_PRIVATE_KEY_LOCATION=/deployments/keys/privateKey.pem
-JWT_PUBLIC_KEY_LOCATION=/deployments/keys/publicKey.pem
-```
-
----
-
-## 8. Monitoramento e saúde
+Confirme de fora da VPS:
 
 ```bash
-# Health check da aplicação
-curl https://api.seudominio.com.br/q/health
+curl -I http://gustavoemalucasam.net.br
+curl -I https://gustavoemalucasam.net.br
+```
 
-# Logs em tempo real
-docker compose -f /opt/casamento/docker-compose.yml logs -f app
+O primeiro deve redirecionar. Teste tambem `/save-the-date` e `/admin/login`: o fallback Nginx deve carregar a SPA em acesso direto.
 
-# Uso de recursos
+## 9. Backup, monitoramento e atualizacao
+
+O backup local mantem sete dias. Configure destino R2 privado exclusivo, diferente da midia: em `sudo rclone config`, crie o remote S3 `casamento-backups` com endpoint/credenciais R2 do bucket de backup. Depois:
+
+```bash
+sudo rclone lsd casamento-backups:
+echo 'BACKUP_RCLONE_DEST=casamento-backups:postgres' | sudo tee -a /opt/casamento/.env
+/opt/casamento/backup-postgres.sh
+sudo crontab -e
+```
+
+Adicione ao crontab:
+
+```cron
+15 3 * * * /opt/casamento/backup-postgres.sh >> /var/log/casamento-backup.log 2>&1
+```
+
+Teste restauracao em banco separado antes do evento. No painel Locaweb, use **Produtos** -> **Servidores** -> **Administrar** -> **Graficos** para acompanhar RAM, CPU e disco.
+
+Para nova versao, repita as secoes 6 e 7. Para rollback do backend, retorne `BACKEND_IMAGE` a tag anterior e execute:
+
+```bash
+cd /opt/casamento
+docker compose --env-file .env -f docker-compose.prod.yml up -d --no-deps app
+```
+
+Para rollback frontend, aponte `current` para a release anterior. Operacao diaria:
+
+```bash
+docker compose --env-file /opt/casamento/.env -f /opt/casamento/docker-compose.prod.yml ps
+docker compose --env-file /opt/casamento/.env -f /opt/casamento/docker-compose.prod.yml logs -f app
 docker stats
+df -h
+sudo nginx -t
+sudo systemctl status certbot.timer
 ```
 
----
+## Diagnostico rapido
 
-## 9. Script de deploy automático
+| Sintoma | Acao |
+|---|---|
+| Certbot falha | Confirme `dig`, IP, Nginx e portas 80/443 no UFW/painel Locaweb. |
+| Erro 502 | Veja logs do app e execute o healthcheck local. |
+| Erro 413 | Confirme `client_max_body_size 210M` e recarregue Nginx. |
+| API falha | Confirme `/api/v1`, bloco `/api/` e container `app`. |
+| Banco falha | Revise `DB_*`, logs do `db` e nunca apague `pg_data`. |
+| Midia falha | Revise `R2_PUBLIC_BASE_URL`, dominio publico e credenciais R2. |
 
-Salvar em `/opt/casamento/deploy.sh`:
+## Checklist final
 
-```bash
-#!/bin/bash
-set -e
-
-IMAGE=$1  # ex: casamento-backend.tar.gz ou casamento-backend-native.tar.gz
-
-echo "▶ Carregando imagem $IMAGE..."
-docker load < "/opt/casamento/$IMAGE"
-
-echo "▶ Reiniciando aplicação..."
-docker compose -f /opt/casamento/docker-compose.yml up -d --no-deps --build app
-
-echo "▶ Aguardando health check..."
-for i in $(seq 1 30); do
-    if curl -sf http://localhost:8080/q/health/live > /dev/null 2>&1; then
-        echo "✅ Aplicação saudável!"
-        exit 0
-    fi
-    sleep 2
-done
-
-echo "❌ Aplicação não respondeu após 60s"
-docker compose -f /opt/casamento/docker-compose.yml logs --tail=50 app
-exit 1
-```
-
-```bash
-chmod +x /opt/casamento/deploy.sh
-
-# Uso:
-./deploy.sh casamento-backend.tar.gz       # JVM
-./deploy.sh casamento-backend-native.tar.gz  # Native
-```
-
----
-
-## 10. Resumo de custos e plano recomendado
-
-| Modo | RAM necessária | Plano sugerido | Observação |
-|---|---|---|---|
-| **JVM (recomendado)** | 2 GB | Plano médio LocalWeb VPS | Mais estável, mais fácil de debugar |
-| **Native** | 512 MB – 1 GB | Plano básico LocalWeb VPS | Menor custo, requer testes antes |
-
-> 💡 **Recomendação prática:** Inicie com **modo JVM + plano 2 GB** para o dia do casamento (estabilidade máxima). Após o evento, migre para **modo nativo + plano 1 GB** se quiser reduzir custo.
->
-> Verifique os planos atuais em: **https://www.localweb.com.br/vps/servidores-vps/**
+- [ ] DNS aponta para a VPS e HTTP redireciona a HTTPS.
+- [ ] `certbot renew --dry-run` passou.
+- [ ] Banco e porta 8080 nao estao publicos.
+- [ ] `.env` e chaves JWT nao estao no Git e possuem permissoes restritas.
+- [ ] Backend, rotas SPA, API e upload foram testados.
+- [ ] Backup externo foi criado e restaurado em ambiente de teste.
+- [ ] A VPS foi reiniciada e os servicos retornaram.

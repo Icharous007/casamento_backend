@@ -47,6 +47,20 @@ class MediaVariantServiceTest {
         assertTrue(thumb.getWidth() <= 400 && thumb.getHeight() <= 400);
     }
 
+    @Test
+    void compressVideoReencodesToSmallerH264Mp4() throws Exception {
+        videoFile = createSyntheticMp4();
+
+        Optional<Path> compressed = service.compressVideo(videoFile);
+
+        assertTrue(compressed.isPresent(), "Expected ffmpeg (libx264) to produce a compressed MP4");
+        try {
+            assertTrue(Files.size(compressed.get()) > 0);
+        } finally {
+            Files.deleteIfExists(compressed.get());
+        }
+    }
+
     private Path createSyntheticMp4() throws Exception {
         Path file = Files.createTempFile("variant-test-", ".mp4");
         int width = 320;

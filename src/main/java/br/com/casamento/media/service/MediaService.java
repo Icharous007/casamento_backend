@@ -37,7 +37,7 @@ public class MediaService {
     private static final Logger LOG = Logger.getLogger(MediaService.class);
 
     private static final long MAX_PHOTO_BYTES = 10 * 1024 * 1024L;  // 10 MB
-    private static final long MAX_VIDEO_BYTES = 50 * 1024 * 1024L;  // 50 MB
+    private static final long MAX_VIDEO_BYTES = 200 * 1024 * 1024L;  // 200 MB (compressed server-side after upload)
     private static final Set<String> ALLOWED_PHOTO_TYPES = Set.of(
             "image/jpeg", "image/png", "image/heic", "image/heif");
     private static final Set<String> ALLOWED_VIDEO_TYPES = Set.of(
@@ -113,14 +113,61 @@ public class MediaService {
                     "variants", elapsedMs(startedAt));
         }
 
+        if ("VIDEO".equals(mediaType)) {
+            compressVideo(asset, guest, filePath, contentType, fileSize);
+        }
+
         asset.persist();
 
-        String url = r2.publicUrl(r2Key);
+        String url = resolveServedUrl(asset);
         String thumb = asset.r2ThumbKey != null ? r2.publicUrl(asset.r2ThumbKey) : null;
         String display = asset.r2DisplayKey != null ? r2.publicUrl(asset.r2DisplayKey) : null;
         logUpload("upload.success", guest, mediaId, contentType, fileSize,
                 "persist", elapsedMs(startedAt));
         return MediaItemResponse.from(asset, url, thumb, display, false);
+    }
+
+    /**
+     * Re-encodes the video to a much smaller H.264/AAC file and uploads it under a
+     * separate R2 key; the raw original (asset.r2Key) is kept untouched as a backup.
+     * Any failure here is non-fatal: the asset just keeps serving the original video.
+     */
+    private void compressVideo(MediaAsset asset, Guest guest, Path filePath, String contentType,
+                               long fileSize) {
+        long compressStartedAt = System.nanoTime();
+        Optional<Path> compressed = variantService.compressVideo(filePath);
+        if (compressed.isEmpty()) {
+            logUpload("upload.compression.degraded", guest, asset.id, contentType, fileSize,
+                    "compression", elapsedMs(compressStartedAt));
+            return;
+        }
+        Path compressedPath = compressed.get();
+        try {
+            String compressedKey = buildCompressedKey(guest.event.id, guest.id, asset.id);
+            try (InputStream compressedData = Files.newInputStream(compressedPath)) {
+                r2.upload(compressedKey, compressedData, Files.size(compressedPath), "video/mp4");
+            }
+            asset.r2CompressedKey = compressedKey;
+            logUpload("upload.compression.success", guest, asset.id, contentType, fileSize,
+                    "compression", elapsedMs(compressStartedAt));
+        } catch (Exception exception) {
+            LOG.warnf(exception, "Failed to upload compressed video for media %s", asset.id);
+            logUpload("upload.compression.degraded", guest, asset.id, contentType, fileSize,
+                    "compression", elapsedMs(compressStartedAt));
+        } finally {
+            try {
+                Files.deleteIfExists(compressedPath);
+            } catch (IOException ignored) {
+                // best effort cleanup
+            }
+        }
+    }
+
+    private String resolveServedUrl(MediaAsset asset) {
+        if ("VIDEO".equals(asset.mediaType) && asset.r2CompressedKey != null) {
+            return r2.publicUrl(asset.r2CompressedKey);
+        }
+        return r2.publicUrl(asset.r2Key);
     }
 
     private void logUpload(String event, Guest guest, UUID mediaId, String contentType,
@@ -188,7 +235,7 @@ public class MediaService {
 
         List<MediaItemResponse> items = assets.stream().map(a -> {
             boolean liked = likedIds.contains(a.id);
-            String url = r2.publicUrl(a.r2Key);
+            String url = resolveServedUrl(a);
             String thumb = a.r2ThumbKey != null ? r2.publicUrl(a.r2ThumbKey) : null;
             String display = a.r2DisplayKey != null ? r2.publicUrl(a.r2DisplayKey) : null;
             return MediaItemResponse.from(a, url, thumb, display, liked);
@@ -301,7 +348,7 @@ public class MediaService {
         ).page(page - 1, pageSize).list();
 
         return assets.stream().map(a -> {
-            String url = r2.publicUrl(a.r2Key);
+            String url = resolveServedUrl(a);
             String thumb = a.r2ThumbKey != null ? r2.publicUrl(a.r2ThumbKey) : null;
             String display = a.r2DisplayKey != null ? r2.publicUrl(a.r2DisplayKey) : null;
             return MediaItemResponse.from(a, url, thumb, display, false);
@@ -361,7 +408,7 @@ public class MediaService {
         }
         if (ALLOWED_VIDEO_TYPES.contains(contentType)) {
             if (fileSize > MAX_VIDEO_BYTES) {
-                throw AppException.badRequest("FILE_TOO_LARGE", "Vídeos devem ter no máximo 50 MB.");
+                throw AppException.badRequest("FILE_TOO_LARGE", "Vídeos devem ter no máximo 200 MB.");
             }
             return "VIDEO";
         }
@@ -388,5 +435,9 @@ public class MediaService {
 
     private String buildVariantKey(UUID eventId, UUID guestId, UUID mediaId, String variantFolder) {
         return "media/" + eventId + "/" + variantFolder + "/" + guestId + "/" + mediaId + ".jpg";
+    }
+
+    private String buildCompressedKey(UUID eventId, UUID guestId, UUID mediaId) {
+        return "media/" + eventId + "/videos-compressed/" + guestId + "/" + mediaId + ".mp4";
     }
 }
