@@ -52,8 +52,8 @@ public class AdminMediaResource {
             @QueryParam("limit") @DefaultValue("50") int limit
     ) {
         Event event = loadEvent(eventId);
-        int processed = mediaService.backfillVariants(event.id, limit);
-        return Response.ok(java.util.Map.of("processed", processed)).build();
+        int queued = mediaService.backfillVariants(event.id, limit);
+        return Response.ok(java.util.Map.of("queued", queued)).build();
     }
 
     @DELETE

@@ -7,7 +7,7 @@
 
 ## 1. Como este backend usa o R2
 
-Hoje o backend envia os arquivos para o R2 via API S3 compatível e depois devolve uma URL pública para o frontend.
+O backend cria uma URL S3 `PUT` curta e o navegador envia o arquivo diretamente ao R2. A leitura ocorre exclusivamente por um Cloudflare Worker que valida uma assinatura HMAC curta; o bucket não é público.
 
 Os parâmetros reais usados pela aplicação estão em `src/main/resources/application.properties`:
 
@@ -18,16 +18,20 @@ app.r2.secret-key=${R2_SECRET_KEY:minioadmin}
 app.r2.bucket=${R2_BUCKET:casamento}
 app.r2.region=${R2_REGION:auto}
 app.r2.public-base-url=${R2_PUBLIC_BASE_URL:}
+app.r2.upload-url-ttl=${R2_UPLOAD_URL_TTL:PT10M}
+app.media.delivery-base-url=${MEDIA_DELIVERY_BASE_URL:}
+app.media.delivery-signing-key=${MEDIA_DELIVERY_SIGNING_KEY:}
+app.media.delivery-url-ttl=${MEDIA_DELIVERY_URL_TTL:PT5M}
 ```
 
 ### Recomendação para este projeto
 
 Para produção, use esta combinação:
 
-1. Bucket privado para gravação via API S3.
-2. Domínio customizado para leitura pública dos arquivos.
-3. `R2_PUBLIC_BASE_URL` apontando para esse domínio customizado.
-4. `r2.dev` apenas para teste, nunca como URL principal de produção.
+1. Bucket privado para gravação pela API S3 assinada.
+2. Worker com binding do bucket como única rota de leitura.
+3. `MEDIA_DELIVERY_BASE_URL` apontando para a rota do Worker.
+4. `R2_PUBLIC_BASE_URL` vazio e `r2.dev` desabilitado, inclusive em testes de produção.
 
 Isso é o que melhor combina com o fluxo atual do sistema.
 
@@ -253,103 +257,23 @@ A própria documentação observa que buckets jurisdicionais só podem ser acess
 
 ---
 
-## 8. Configurar acesso público dos arquivos
+## 8. Configurar entrega privada dos arquivos
 
 Esse é o ponto mais importante para o frontend funcionar bem.
 
-A documentação do R2 oferece dois caminhos:
+Crie uma rota Worker em um subdomínio dedicado, por exemplo `media.seudominio.com.br/*`. O código está em `deploy/cloudflare/media-worker/` e deve receber o binding privado do bucket.
 
-1. `r2.dev` para uso de desenvolvimento e testes
-2. domínio customizado para produção
+Antes do deploy, gere um segredo aleatório único e configure o mesmo valor como `MEDIA_DELIVERY_SIGNING_KEY` na VPS e `MEDIA_DELIVERY_SIGNING_KEY` no Worker. Depois:
 
-### O que usar no seu caso
-
-Use:
-
-1. `r2.dev` apenas para validação inicial
-2. domínio customizado para produção
-
-A documentação do Cloudflare informa que o `r2.dev`:
-
-1. é rate limited
-2. não é indicado para produção
-3. pode sofrer throttling de banda
-4. não oferece o mesmo nível de cache, WAF e controles que domínio próprio
-
-### 8.1 Habilitar `r2.dev` para testes
-
-1. Abra o bucket no painel R2.
-2. Entre em **Settings**.
-3. Em **Public Development URL**, clique em **Enable**.
-4. Digite `allow` para confirmar.
-5. Copie a URL pública gerada.
-
-Exemplo de uso temporário:
-
-```env
-R2_PUBLIC_BASE_URL=https://pub-xxxxxxxx.r2.dev
+```bash
+cd deploy/cloudflare/media-worker
+npx wrangler login
+npx wrangler secret put MEDIA_DELIVERY_SIGNING_KEY
+npx wrangler r2 bucket cors set casamento-media-prod --file r2-cors.production.json
+npx wrangler deploy
 ```
 
-Use isso somente para testes rápidos.
-
-### 8.2 Configurar domínio customizado para produção
-
-A documentação oficial informa que o domínio precisa existir na mesma conta Cloudflare do bucket.
-
-#### Pré-requisito
-
-O domínio ou a zona deve estar na Cloudflare.
-
-Se o domínio ainda não estiver gerenciado lá, use:
-
-1. zona completa na Cloudflare, ou
-2. partial setup por CNAME, se aplicável
-
-#### Passo a passo
-
-1. No painel R2, abra o bucket.
-2. Vá em **Settings**.
-3. Na seção **Custom Domains**, clique em **Add**.
-4. Informe o subdomínio desejado, por exemplo:
-
-```txt
-media.seudominio.com.br
-```
-
-5. Clique em **Continue**.
-6. Revise o registro DNS que a Cloudflare vai criar.
-7. Clique em **Connect Domain**.
-8. Aguarde o status mudar de `Initializing` para `Active`.
-
-### Recomendação prática
-
-Use um subdomínio dedicado:
-
-```txt
-media.seudominio.com.br
-```
-
-Evite servir mídia pelo mesmo host da API.
-
-Separar os hosts ajuda em:
-
-1. cache
-2. observabilidade
-3. regras de segurança
-4. troubleshooting de CORS
-
-### 8.3 Desabilitar `r2.dev` quando o domínio customizado estiver pronto
-
-A documentação alerta que, se `r2.dev` continuar habilitado, o bucket pode seguir público por esse caminho mesmo se você proteger o domínio customizado com WAF ou Access.
-
-Depois de validar o domínio customizado:
-
-1. volte ao bucket
-2. abra **Settings**
-3. em **Public Development URL**, clique em **Disable**
-4. digite `disallow`
-
-Para produção, essa é a configuração correta.
+Desabilite `r2.dev` e não associe um domínio público diretamente ao bucket. A rota do Worker já fornece cache de edge depois de validar a assinatura.
 
 ---
 
@@ -365,12 +289,12 @@ A documentação do Cloudflare informa que o domínio customizado permite usar:
 
 ### Recomendação prática
 
-Para mídia pública do casamento:
+Para mídia privada do casamento:
 
 1. habilite HTTPS no domínio
 2. ative `Always Use HTTPS`
-3. considere uma regra de cache para arquivos estáticos
-4. se quiser cache agressivo, avalie `Cache Everything`
+3. mantenha o Worker como rota de mídia
+4. não crie regra que exponha diretamente o bucket
 
 Observação importante da documentação:
 
@@ -385,14 +309,13 @@ Para fotos e vídeos públicos, isso normalmente vale a pena.
 
 ### Quando CORS é necessário no seu caso
 
-No fluxo atual do projeto, o upload do navegador vai primeiro para o backend, e o backend envia o arquivo ao R2.
+No fluxo atual do projeto, o navegador recebe uma URL assinada curta e envia o arquivo diretamente ao R2.
 
 Isso significa:
 
-1. para upload atual, o navegador não fala diretamente com o R2
-2. então CORS no R2 não é obrigatório para o upload atual
-3. mas CORS pode ser útil para leitura de mídia no frontend, especialmente vídeo, áudio e acesso a headers
-4. CORS será obrigatório se no futuro você migrar para upload direto navegador -> R2 com presigned URL
+1. CORS no R2 é obrigatório para o `PUT` direto
+2. o Worker atende leitura, portanto R2 não precisa liberar `GET` ou `HEAD` ao frontend
+3. não use `AllowedOrigins: ["*"]`
 
 ### Passo a passo no painel
 
@@ -403,9 +326,7 @@ Isso significa:
 5. Cole a política.
 6. Clique em **Save**.
 
-### Política recomendada para leitura pelo frontend
-
-Se o frontend estiver em `https://app.seudominio.com.br`:
+### Política para upload direto com presigned URL
 
 ```json
 [
@@ -414,25 +335,8 @@ Se o frontend estiver em `https://app.seudominio.com.br`:
       "https://app.seudominio.com.br",
       "http://localhost:5173"
     ],
-    "AllowedMethods": ["GET", "HEAD"],
-    "AllowedHeaders": ["*"],
-    "ExposeHeaders": ["ETag", "Content-Length", "Content-Type", "Cache-Control"],
-    "MaxAgeSeconds": 3600
-  }
-]
-```
-
-### Política se no futuro houver upload direto com presigned URL
-
-```json
-[
-  {
-    "AllowedOrigins": [
-      "https://app.seudominio.com.br",
-      "http://localhost:5173"
-    ],
-    "AllowedMethods": ["GET", "HEAD", "PUT"],
-    "AllowedHeaders": ["Content-Type", "*"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["Content-Type"],
     "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3600
   }
@@ -462,7 +366,10 @@ R2_ACCESS_KEY=SEU_ACCESS_KEY_ID
 R2_SECRET_KEY=SEU_SECRET_ACCESS_KEY
 R2_BUCKET=casamento-media-prod
 R2_REGION=auto
-R2_PUBLIC_BASE_URL=https://media.seudominio.com.br
+R2_PUBLIC_BASE_URL=
+MEDIA_DELIVERY_BASE_URL=https://media.seudominio.com.br
+MEDIA_DELIVERY_SIGNING_KEY=SEGREDO_ALEATORIO_COMPARTILHADO_COM_O_WORKER
+MEDIA_DELIVERY_URL_TTL=PT5M
 ```
 
 ### O que significa cada variável
@@ -472,35 +379,20 @@ R2_PUBLIC_BASE_URL=https://media.seudominio.com.br
 3. `R2_SECRET_KEY`: Secret Access Key gerado na Cloudflare
 4. `R2_BUCKET`: bucket onde os arquivos serão gravados
 5. `R2_REGION`: deve ficar `auto`
-6. `R2_PUBLIC_BASE_URL`: domínio público usado nas URLs devolvidas pelo backend
+6. `R2_PUBLIC_BASE_URL`: deve ficar vazio em produção
+7. `MEDIA_DELIVERY_BASE_URL`: domínio do Worker usado nas URLs devolvidas pelo backend
+8. `MEDIA_DELIVERY_SIGNING_KEY`: segredo HMAC compartilhado com o Worker
 
-### Valor correto de `R2_PUBLIC_BASE_URL`
+### Valor correto de `MEDIA_DELIVERY_BASE_URL`
 
-Use um destes formatos:
-
-```env
-R2_PUBLIC_BASE_URL=https://media.seudominio.com.br
-```
-
-ou, temporariamente:
+Use o domínio da rota Worker, sem barra final:
 
 ```env
-R2_PUBLIC_BASE_URL=https://pub-xxxxxxxx.r2.dev
+MEDIA_DELIVERY_BASE_URL=https://media.seudominio.com.br
+R2_PUBLIC_BASE_URL=
 ```
 
-Não coloque barra final.
-
-Correto:
-
-```txt
-https://media.seudominio.com.br
-```
-
-Errado:
-
-```txt
-https://media.seudominio.com.br/
-```
+O backend exige essa configuração no perfil `prod`; ele não deve montar URLs `r2.dev` ou de domínio público do bucket.
 
 ---
 
@@ -535,15 +427,15 @@ Depois de preencher o `.env` e subir a aplicação:
 
 1. faça upload de uma foto pequena
 2. confira se o registro foi salvo normalmente
-3. verifique se a URL retornada já vem com o host público esperado
+3. verifique se a URL retornada usa o host do Worker e contém `expires` e `signature`
 
 Exemplo esperado:
 
 ```txt
-https://media.seudominio.com.br/eventos/.../arquivo.jpg
+https://media.seudominio.com.br/media/.../arquivo.jpg?expires=...&signature=...
 ```
 
-Se a URL voltar com host diferente do configurado, revise `R2_PUBLIC_BASE_URL`.
+Se a URL voltar sem assinatura, revise `MEDIA_DELIVERY_BASE_URL` e `MEDIA_DELIVERY_SIGNING_KEY`.
 
 ---
 
@@ -555,13 +447,13 @@ Antes de considerar a configuração pronta, valide estes pontos:
 2. o token tem acesso apenas ao bucket certo
 3. o endpoint está correto
 4. `R2_REGION=auto`
-5. o domínio customizado está `Active`
-6. `R2_PUBLIC_BASE_URL` aponta para o domínio correto
+5. a rota Worker está publicada e o binding aponta para o bucket correto
+6. `R2_PUBLIC_BASE_URL` está vazio e `MEDIA_DELIVERY_BASE_URL` aponta para o Worker
 7. o upload de foto funciona
 8. o upload de vídeo funciona
 9. a URL retornada pelo backend abre no navegador
 10. imagem carrega no frontend
-11. vídeo ou áudio carrega sem erro de CORS
+11. vídeo ou áudio carrega pela URL assinada do Worker
 12. `r2.dev` foi desabilitado se o ambiente já é produção
 
 ---
@@ -644,9 +536,9 @@ Se eu fosse deixar este projeto pronto para produção hoje, eu usaria exatament
 1. bucket `casamento-media-prod`
 2. localização `Automatic`
 3. token `Object Read & Write` restrito ao bucket
-4. domínio customizado `media.seudominio.com.br`
+4. Worker na rota `media.seudominio.com.br/*` com binding do bucket
 5. `r2.dev` desabilitado após homologação
-6. CORS liberando `GET` e `HEAD` para frontend e localhost
+6. CORS liberando somente `PUT` do frontend para upload direto
 7. HTTPS obrigatório
 
 ### Backend
@@ -657,7 +549,10 @@ R2_ACCESS_KEY=SEU_ACCESS_KEY_ID
 R2_SECRET_KEY=SEU_SECRET_ACCESS_KEY
 R2_BUCKET=casamento-media-prod
 R2_REGION=auto
-R2_PUBLIC_BASE_URL=https://media.seudominio.com.br
+R2_PUBLIC_BASE_URL=
+MEDIA_DELIVERY_BASE_URL=https://media.seudominio.com.br
+MEDIA_DELIVERY_SIGNING_KEY=SEGREDO_ALEATORIO_COMPARTILHADO_COM_O_WORKER
+MEDIA_DELIVERY_URL_TTL=PT5M
 ```
 
-Essa é a configuração mais consistente com a documentação oficial do Cloudflare R2 e com o código atual do seu backend.
+Essa é a configuração necessária para a entrega privada pelo Worker e upload direto ao R2 implementados no backend.

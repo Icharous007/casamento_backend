@@ -6,14 +6,21 @@ import br.com.casamento.domain.event.Event;
 import br.com.casamento.domain.media.MediaAsset;
 import br.com.casamento.domain.media.MediaComment;
 import br.com.casamento.domain.media.MediaLike;
+import br.com.casamento.domain.media.MediaUploadIntent;
+import br.com.casamento.domain.media.MediaVariantJob;
 import br.com.casamento.domain.guest.Guest;
 import br.com.casamento.media.dto.AddCommentRequest;
+import br.com.casamento.media.dto.CreateMediaUploadIntentRequest;
 import br.com.casamento.media.dto.MediaCommentResponse;
 import br.com.casamento.media.dto.MediaItemResponse;
+import br.com.casamento.media.dto.MediaUploadIntentResponse;
 import br.com.casamento.storage.R2StorageService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import org.jboss.logging.MDC;
 
@@ -23,6 +30,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,11 +45,11 @@ public class MediaService {
     private static final Logger LOG = Logger.getLogger(MediaService.class);
 
     private static final long MAX_PHOTO_BYTES = 10 * 1024 * 1024L;  // 10 MB
-    private static final long MAX_VIDEO_BYTES = 200 * 1024 * 1024L;  // 200 MB (compressed server-side after upload)
+    private static final long MAX_VIDEO_BYTES = 200 * 1024 * 1024L;
+        private static final String QUICKTIME_CONTENT_TYPE = "video/quicktime";
     private static final Set<String> ALLOWED_PHOTO_TYPES = Set.of(
             "image/jpeg", "image/png", "image/heic", "image/heif");
-    private static final Set<String> ALLOWED_VIDEO_TYPES = Set.of(
-            "video/mp4", "video/quicktime", "video/webm");
+        private static final Set<String> ALLOWED_VIDEO_TYPES = Set.of("video/mp4", QUICKTIME_CONTENT_TYPE);
     private static final int MAX_PAGE_SIZE = 24;
 
     @Inject
@@ -50,11 +58,24 @@ public class MediaService {
     @Inject
     MediaVariantService variantService;
 
+    @Inject
+    MediaErrorDiagnosticsService diagnosticsService;
+
+    @Inject
+    EntityManager entityManager;
+
+    @ConfigProperty(name = "app.media.max-pending-uploads-per-guest", defaultValue = "3")
+    int maxPendingUploadsPerGuest;
+
+    public record DirectUploadVerification(UUID mediaId, String r2Key, boolean completed) {
+    }
+
     // ── Upload ──────────────────────────────────────────────────────────────
 
     @Transactional
     public MediaItemResponse upload(Guest guest, String filename, String contentType,
                                     long fileSize, Path filePath) throws IOException {
+        ensureGalleryWritable(guest.event.id);
         long startedAt = System.nanoTime();
         UUID mediaId = UUID.randomUUID();
         logUpload("upload.start", guest, mediaId, contentType, fileSize, null, null);
@@ -113,10 +134,6 @@ public class MediaService {
                     "variants", elapsedMs(startedAt));
         }
 
-        if ("VIDEO".equals(mediaType)) {
-            compressVideo(asset, guest, filePath, contentType, fileSize);
-        }
-
         asset.persist();
 
         String url = resolveServedUrl(asset);
@@ -127,47 +144,17 @@ public class MediaService {
         return MediaItemResponse.from(asset, url, thumb, display, false);
     }
 
-    /**
-     * Re-encodes the video to a much smaller H.264/AAC file and uploads it under a
-     * separate R2 key; the raw original (asset.r2Key) is kept untouched as a backup.
-     * Any failure here is non-fatal: the asset just keeps serving the original video.
-     */
-    private void compressVideo(MediaAsset asset, Guest guest, Path filePath, String contentType,
-                               long fileSize) {
-        long compressStartedAt = System.nanoTime();
-        Optional<Path> compressed = variantService.compressVideo(filePath);
-        if (compressed.isEmpty()) {
-            logUpload("upload.compression.degraded", guest, asset.id, contentType, fileSize,
-                    "compression", elapsedMs(compressStartedAt));
-            return;
-        }
-        Path compressedPath = compressed.get();
-        try {
-            String compressedKey = buildCompressedKey(guest.event.id, guest.id, asset.id);
-            try (InputStream compressedData = Files.newInputStream(compressedPath)) {
-                r2.upload(compressedKey, compressedData, Files.size(compressedPath), "video/mp4");
-            }
-            asset.r2CompressedKey = compressedKey;
-            logUpload("upload.compression.success", guest, asset.id, contentType, fileSize,
-                    "compression", elapsedMs(compressStartedAt));
-        } catch (Exception exception) {
-            LOG.warnf(exception, "Failed to upload compressed video for media %s", asset.id);
-            logUpload("upload.compression.degraded", guest, asset.id, contentType, fileSize,
-                    "compression", elapsedMs(compressStartedAt));
-        } finally {
-            try {
-                Files.deleteIfExists(compressedPath);
-            } catch (IOException ignored) {
-                // best effort cleanup
-            }
-        }
-    }
-
     private String resolveServedUrl(MediaAsset asset) {
         if ("VIDEO".equals(asset.mediaType) && asset.r2CompressedKey != null) {
             return r2.publicUrl(asset.r2CompressedKey);
         }
         return r2.publicUrl(asset.r2Key);
+    }
+
+    private MediaItemResponse toResponse(MediaAsset asset, boolean likedByMe) {
+        String thumb = asset.r2ThumbKey != null ? r2.publicUrl(asset.r2ThumbKey) : null;
+        String display = asset.r2DisplayKey != null ? r2.publicUrl(asset.r2DisplayKey) : null;
+        return MediaItemResponse.from(asset, resolveServedUrl(asset), thumb, display, likedByMe);
     }
 
     private void logUpload(String event, Guest guest, UUID mediaId, String contentType,
@@ -209,6 +196,175 @@ public class MediaService {
         asset.r2DisplayKey = displayKey;
     }
 
+    // ── Direct upload (browser -> R2) ──────────────────────────────────────
+
+    @Transactional
+    public MediaUploadIntentResponse createDirectUploadIntent(Guest authenticatedGuest,
+                                                               CreateMediaUploadIntentRequest request,
+                                                               String idempotencyKey) {
+        validateIdempotencyKey(idempotencyKey);
+        lockIdempotencyKey(authenticatedGuest.id, idempotencyKey);
+        Event event = Event.findById(authenticatedGuest.event.id);
+        ensureGalleryWritable(event.id);
+
+        String contentType = normalizeContentType(request.contentType());
+        long fileSize = request.fileSizeBytes();
+        String mediaType = detectMediaType(contentType, fileSize);
+        Guest guest = Guest.findById(authenticatedGuest.id);
+        MediaUploadIntent existing = MediaUploadIntent.findByGuestAndIdempotencyKey(guest.id, idempotencyKey);
+        if (existing != null) {
+            if (existing.expectedFileSize != fileSize || !existing.expectedContentType.equals(contentType)) {
+                throw AppException.conflict("IDEMPOTENCY_KEY_REUSED", "A chave de envio já pertence a outro arquivo.");
+            }
+            if ("COMPLETED".equals(existing.status)) {
+                return new MediaUploadIntentResponse(existing.id, existing.status, null, existing.expiresAt);
+            }
+            existing.status = "PENDING";
+            existing.failureCode = null;
+            return presignIntent(existing);
+        }
+
+        long pending = expireAbandonedIntents(guest.id);
+        if (pending >= maxPendingUploadsPerGuest) {
+            throw AppException.conflict("UPLOAD_LIMIT_EXCEEDED", "Conclua ou cancele os envios pendentes antes de iniciar outro.");
+        }
+
+        UUID mediaId = UUID.randomUUID();
+        MediaAsset asset = new MediaAsset();
+        asset.id = mediaId;
+        asset.event = event;
+        asset.guest = guest;
+        asset.mediaType = mediaType;
+        asset.status = "PROCESSING";
+        asset.r2Key = buildKey(event.id, guest.id, mediaId, mediaType, extensionFor(contentType));
+        asset.originalFilename = request.filename().strip();
+        asset.contentType = contentType;
+        asset.fileSizeBytes = fileSize;
+        asset.persist();
+
+        MediaUploadIntent intent = new MediaUploadIntent();
+        intent.id = mediaId;
+        intent.media = asset;
+        intent.guest = guest;
+        intent.idempotencyKey = idempotencyKey;
+        intent.expectedContentType = contentType;
+        intent.expectedFileSize = fileSize;
+        intent.expiresAt = OffsetDateTime.ofInstant(r2.uploadUrlExpiresAt(), ZoneOffset.UTC);
+        intent.persist();
+        return presignIntent(intent);
+    }
+
+    @Transactional
+    public DirectUploadVerification loadDirectUploadVerification(Guest guest, UUID mediaId) {
+        MediaUploadIntent intent = MediaUploadIntent.find(
+                "SELECT i FROM MediaUploadIntent i JOIN FETCH i.media WHERE i.id = ?1 AND i.guest.id = ?2",
+                mediaId, guest.id).firstResult();
+        if (intent == null) {
+            throw AppException.notFound("Envio de mídia não encontrado.");
+        }
+        if ("COMPLETED".equals(intent.status)) {
+            return new DirectUploadVerification(mediaId, intent.media.r2Key, true);
+        }
+        if (!"PENDING".equals(intent.status) || OffsetDateTime.now().isAfter(intent.expiresAt)) {
+            if ("PENDING".equals(intent.status)) {
+                intent.status = "EXPIRED";
+            }
+            throw AppException.conflict("UPLOAD_EXPIRED", "O link de envio expirou. Inicie o envio novamente.");
+        }
+        return new DirectUploadVerification(mediaId, intent.media.r2Key, false);
+    }
+
+    @Transactional
+    public MediaItemResponse publishDirectUpload(Guest guest, UUID mediaId,
+                                                  R2StorageService.StoredObjectMetadata metadata,
+                                                  byte[] header) {
+        ensureGalleryWritable(guest.event.id);
+        MediaUploadIntent intent = entityManager.find(MediaUploadIntent.class, mediaId, LockModeType.PESSIMISTIC_WRITE);
+        if (intent == null || !intent.guest.id.equals(guest.id)) {
+            throw AppException.notFound("Envio de mídia não encontrado.");
+        }
+        MediaAsset asset = MediaAsset.find(
+                "SELECT a FROM MediaAsset a LEFT JOIN FETCH a.guest WHERE a.id = ?1", mediaId).firstResult();
+        if (asset == null) {
+            throw AppException.notFound("Mídia não encontrada.");
+        }
+        if ("COMPLETED".equals(intent.status)) {
+            return toResponse(asset, false);
+        }
+        if (!"PENDING".equals(intent.status) || OffsetDateTime.now().isAfter(intent.expiresAt)) {
+            intent.status = "EXPIRED";
+            throw AppException.conflict("UPLOAD_EXPIRED", "O link de envio expirou. Inicie o envio novamente.");
+        }
+        if (metadata == null || metadata.contentLength() != intent.expectedFileSize
+                || !intent.expectedContentType.equals(metadata.contentType())
+                || !hasExpectedSignature(intent.expectedContentType, header)) {
+            intent.status = "FAILED";
+            intent.failureCode = "OBJECT_VERIFICATION_FAILED";
+            throw AppException.badRequest("UPLOAD_VERIFICATION_FAILED", "Não foi possível validar o arquivo enviado.");
+        }
+
+        asset.status = "ACTIVE";
+        intent.status = "COMPLETED";
+        intent.completedAt = OffsetDateTime.now();
+        MediaVariantJob job = new MediaVariantJob();
+        job.media = asset;
+        job.availableAt = OffsetDateTime.now();
+        job.persist();
+        return toResponse(asset, false);
+    }
+
+    private MediaUploadIntentResponse presignIntent(MediaUploadIntent intent) {
+        R2StorageService.PresignedUpload upload = r2.presignUpload(intent.media.r2Key, intent.expectedContentType);
+        intent.expiresAt = OffsetDateTime.ofInstant(upload.expiresAt(), ZoneOffset.UTC);
+        return new MediaUploadIntentResponse(intent.id, intent.status, upload.url(), intent.expiresAt);
+    }
+
+    private void validateIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.length() < 16 || idempotencyKey.length() > 128) {
+            throw AppException.badRequest("IDEMPOTENCY_KEY_INVALID", "Chave de envio inválida.");
+        }
+    }
+
+    private long expireAbandonedIntents(UUID guestId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        List<MediaUploadIntent> pendingIntents = MediaUploadIntent.find(
+                "SELECT i FROM MediaUploadIntent i JOIN FETCH i.media "
+                        + "WHERE i.guest.id = ?1 AND i.status = 'PENDING'", guestId).list();
+        for (MediaUploadIntent pendingIntent : pendingIntents) {
+            if (now.isAfter(pendingIntent.expiresAt) || r2.head(pendingIntent.media.r2Key) == null) {
+                pendingIntent.status = "EXPIRED";
+            }
+        }
+        entityManager.flush();
+        return pendingIntents.stream()
+                .filter(intent -> "PENDING".equals(intent.status) && intent.expiresAt.isAfter(now))
+                .count();
+    }
+
+    private void lockIdempotencyKey(UUID guestId, String idempotencyKey) {
+        entityManager.createNativeQuery("SELECT pg_advisory_xact_lock(hashtextextended(?1, 0))")
+                .setParameter(1, guestId + ":" + idempotencyKey)
+                .getSingleResult();
+    }
+
+    private String normalizeContentType(String contentType) {
+        int separator = contentType.indexOf(';');
+        return (separator >= 0 ? contentType.substring(0, separator) : contentType).trim().toLowerCase();
+    }
+
+    private boolean hasExpectedSignature(String contentType, byte[] header) {
+        return switch (contentType) {
+            case "image/jpeg" -> header.length >= 3
+                    && (header[0] & 0xFF) == 0xFF && (header[1] & 0xFF) == 0xD8 && (header[2] & 0xFF) == 0xFF;
+            case "image/png" -> header.length >= 8
+                    && (header[0] & 0xFF) == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47
+                    && header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A;
+            case "image/heic", "image/heif", "video/mp4", QUICKTIME_CONTENT_TYPE -> header.length >= 12
+                    && header[4] == 'f' && header[5] == 't' && header[6] == 'y' && header[7] == 'p';
+            default -> false;
+        };
+    }
+
     // ── Gallery (guest) ─────────────────────────────────────────────────────
 
     public Map<String, Object> listGallery(Event event, Guest guest, String sort,
@@ -222,10 +378,11 @@ public class MediaService {
         int safePageSize = Math.min(Math.max(1, pageSize), MAX_PAGE_SIZE);
 
         boolean popular = "popular".equals(sort) || "top".equals(sort);
-        String orderBy = popular ? "likeCount DESC, createdAt DESC" : "createdAt DESC";
+        String orderBy = popular ? "a.likeCount DESC, a.createdAt DESC" : "a.createdAt DESC";
 
         List<MediaAsset> assets = MediaAsset.find(
-                "event.id = ?1 AND status = 'ACTIVE' ORDER BY " + orderBy,
+            "SELECT a FROM MediaAsset a LEFT JOIN FETCH a.guest "
+                + "WHERE a.event.id = ?1 AND a.status = 'ACTIVE' ORDER BY " + orderBy,
                 event.id
         ).page(safePage - 1, safePageSize).list();
 
@@ -260,22 +417,27 @@ public class MediaService {
 
     @Transactional
     public void addLike(UUID mediaId, Guest guest) {
+        ensureGalleryWritable(guest.event.id);
         MediaAsset asset = MediaAsset.findById(mediaId);
         if (asset == null || !asset.event.id.equals(guest.event.id)) {
             throw AppException.notFound("Mídia não encontrada.");
         }
-        if (MediaLike.existsByMediaAndGuest(asset, guest)) {
+        int inserted = entityManager.createNativeQuery(
+                        "INSERT INTO media_likes (id, media_id, guest_id, created_at) "
+                                + "VALUES (gen_random_uuid(), ?1, ?2, NOW()) "
+                                + "ON CONFLICT (media_id, guest_id) DO NOTHING")
+                .setParameter(1, mediaId)
+                .setParameter(2, guest.id)
+                .executeUpdate();
+        if (inserted == 0) {
             throw AppException.conflict("LIKE_ALREADY_EXISTS", "Você já curtiu esta mídia.");
         }
-        MediaLike like = new MediaLike();
-        like.media = asset;
-        like.guest = guest;
-        like.persist();
-        asset.likeCount++;
+        MediaAsset.update("likeCount = likeCount + 1 WHERE id = ?1", mediaId);
     }
 
     @Transactional
     public void removeLike(UUID mediaId, Guest guest) {
+        ensureGalleryWritable(guest.event.id);
         MediaAsset asset = MediaAsset.findById(mediaId);
         if (asset == null || !asset.event.id.equals(guest.event.id)) {
             throw AppException.notFound("Mídia não encontrada.");
@@ -285,13 +447,14 @@ public class MediaService {
             throw AppException.notFound("Curtida não encontrada.");
         }
         like.delete();
-        if (asset.likeCount > 0) asset.likeCount--;
+        MediaAsset.update("likeCount = CASE WHEN likeCount > 0 THEN likeCount - 1 ELSE 0 END WHERE id = ?1", mediaId);
     }
 
     // ── Comments ─────────────────────────────────────────────────────────────
 
     @Transactional
     public MediaCommentResponse addComment(UUID mediaId, Guest guest, AddCommentRequest req) {
+        ensureGalleryWritable(guest.event.id);
         MediaAsset asset = MediaAsset.findById(mediaId);
         if (asset == null || !asset.event.id.equals(guest.event.id)) {
             throw AppException.notFound("Mídia não encontrada.");
@@ -301,7 +464,7 @@ public class MediaService {
         comment.guest = guest;
         comment.content = req.content();
         comment.persist();
-        asset.commentCount++;
+        MediaAsset.update("commentCount = commentCount + 1 WHERE id = ?1", mediaId);
         return MediaCommentResponse.from(comment);
     }
 
@@ -311,7 +474,8 @@ public class MediaService {
             throw AppException.notFound("Mídia não encontrada.");
         }
         return MediaComment.find(
-                "media.id = ?1 AND status = 'ACTIVE' ORDER BY createdAt ASC", mediaId
+            "SELECT c FROM MediaComment c JOIN FETCH c.guest "
+                + "WHERE c.media.id = ?1 AND c.status = 'ACTIVE' ORDER BY c.createdAt ASC", mediaId
         ).<MediaComment>list().stream().map(MediaCommentResponse::from).toList();
     }
 
@@ -321,10 +485,13 @@ public class MediaService {
     public void removeComment(UUID commentId) {
         MediaComment comment = MediaComment.findById(commentId);
         if (comment == null) throw AppException.notFound("Comentário não encontrado.");
-        comment.status = "REMOVED";
-        // decrement comment_count
         MediaAsset asset = comment.media;
-        if (asset.commentCount > 0) asset.commentCount--;
+        int removed = MediaComment.update("status = 'REMOVED' WHERE id = ?1 AND status = 'ACTIVE'", commentId);
+        if (removed > 0) {
+            MediaAsset.update(
+                "commentCount = CASE WHEN commentCount > 0 THEN commentCount - 1 ELSE 0 END WHERE id = ?1",
+                asset.id);
+        }
     }
 
     @Transactional
@@ -343,9 +510,12 @@ public class MediaService {
     }
 
     public List<MediaItemResponse> listAllForAdmin(UUID eventId, int page, int pageSize) {
+        int safePage = Math.max(1, page);
+        int safePageSize = Math.min(Math.max(1, pageSize), MAX_PAGE_SIZE);
         List<MediaAsset> assets = MediaAsset.find(
-                "event.id = ?1 AND status <> 'DELETED' ORDER BY createdAt DESC", eventId
-        ).page(page - 1, pageSize).list();
+            "SELECT a FROM MediaAsset a LEFT JOIN FETCH a.guest "
+                + "WHERE a.event.id = ?1 AND a.status <> 'DELETED' ORDER BY a.createdAt DESC", eventId
+        ).page(safePage - 1, safePageSize).list();
 
         return assets.stream().map(a -> {
             String url = resolveServedUrl(a);
@@ -356,45 +526,35 @@ public class MediaService {
     }
 
     /**
-     * Regenerates thumb/display variants for previously-uploaded assets that predate
-     * variant generation (r2ThumbKey still null). Downloads the original from R2,
-     * runs it through the same pipeline used at upload time, and re-uploads variants.
+     * Queues thumb/display regeneration for previously-uploaded assets that predate
+     * variant generation. The scheduler does the R2 and image work outside this transaction.
      */
     @Transactional
     public int backfillVariants(UUID eventId, int limit) {
+        int safeLimit = Math.min(Math.max(1, limit), 50);
         List<MediaAsset> assets = MediaAsset.find(
                 "event.id = ?1 AND status = 'ACTIVE' AND r2ThumbKey IS NULL ORDER BY createdAt ASC",
                 eventId
-        ).page(0, limit).list();
+        ).page(0, safeLimit).list();
 
-        int processed = 0;
+        int queued = 0;
         for (MediaAsset asset : assets) {
-            Path tempFile = null;
-            try {
-                tempFile = Files.createTempFile("backfill-", extensionFor(asset.contentType));
-                Files.write(tempFile, r2.download(asset.r2Key));
-
-                Optional<MediaVariantService.Variants> variants = "PHOTO".equals(asset.mediaType)
-                        ? variantService.generatePhotoVariants(tempFile, asset.contentType)
-                        : variantService.generateVideoPoster(tempFile);
-
-                if (variants.isPresent()) {
-                    uploadVariants(asset, variants.get());
-                    processed++;
-                }
-            } catch (Exception e) {
-                LOG.warnf(e, "Backfill failed for media %s", asset.id);
-            } finally {
-                if (tempFile != null) {
-                    try {
-                        Files.deleteIfExists(tempFile);
-                    } catch (IOException ignored) {
-                        // best effort cleanup
-                    }
-                }
+            MediaVariantJob job = MediaVariantJob.findById(asset.id);
+            if (job == null) {
+                job = new MediaVariantJob();
+                job.media = asset;
+                job.availableAt = OffsetDateTime.now();
+                job.persist();
+                queued++;
+            } else if ("FAILED".equals(job.status)) {
+                job.status = "PENDING";
+                job.attemptCount = 0;
+                job.availableAt = OffsetDateTime.now();
+                job.lastError = null;
+                queued++;
             }
         }
-        return processed;
+        return queued;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -413,7 +573,7 @@ public class MediaService {
             return "VIDEO";
         }
         throw AppException.badRequest("INVALID_MEDIA_TYPE",
-                "Formato não suportado. Fotos: JPEG, PNG, HEIC. Vídeos: MP4, MOV, WebM.");
+            "Formato não suportado. Fotos: JPEG, PNG, HEIC. Vídeos: MP4 ou MOV.");
     }
 
     private String extensionFor(String contentType) {
@@ -422,8 +582,7 @@ public class MediaService {
             case "image/png" -> ".png";
             case "image/heic", "image/heif" -> ".heic";
             case "video/mp4" -> ".mp4";
-            case "video/quicktime" -> ".mov";
-            case "video/webm" -> ".webm";
+            case QUICKTIME_CONTENT_TYPE -> ".mov";
             default -> "";
         };
     }
@@ -437,7 +596,10 @@ public class MediaService {
         return "media/" + eventId + "/" + variantFolder + "/" + guestId + "/" + mediaId + ".jpg";
     }
 
-    private String buildCompressedKey(UUID eventId, UUID guestId, UUID mediaId) {
-        return "media/" + eventId + "/videos-compressed/" + guestId + "/" + mediaId + ".mp4";
+    private void ensureGalleryWritable(UUID eventId) {
+        Event event = Event.findById(eventId);
+        if (event == null || (event.galleryHideAt != null && OffsetDateTime.now().isAfter(event.galleryHideAt))) {
+            throw AppException.conflict("GALLERY_CLOSED", "A galeria não está mais disponível para alterações.");
+        }
     }
 }

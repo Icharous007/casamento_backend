@@ -1,0 +1,13 @@
+[
+  {
+    "AllowedOrigins": [
+      "https://gustavoemalucasam.net.br",
+      "http://localhost:5173",
+      "http://192.168.15.5:5173"
+    ],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["Content-Type"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]

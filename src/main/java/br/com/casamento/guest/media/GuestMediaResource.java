@@ -4,9 +4,12 @@ import br.com.casamento.auth.filter.GuestTokenFilter.RequiresGuestToken;
 import br.com.casamento.auth.security.GuestContext;
 import br.com.casamento.domain.guest.Guest;
 import br.com.casamento.media.dto.AddCommentRequest;
+import br.com.casamento.media.dto.CreateMediaUploadIntentRequest;
 import br.com.casamento.media.dto.MediaCommentResponse;
 import br.com.casamento.media.dto.MediaItemResponse;
+import br.com.casamento.media.dto.MediaUploadIntentResponse;
 import br.com.casamento.media.service.MediaService;
+import br.com.casamento.storage.R2StorageService;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import jakarta.validation.Valid;
@@ -36,6 +39,30 @@ public class GuestMediaResource {
 
     @Inject
     MediaService mediaService;
+
+    @Inject
+    R2StorageService r2;
+
+    @POST
+    @Path("/upload-intents")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response createUploadIntent(@Valid CreateMediaUploadIntentRequest request,
+                                       @HeaderParam("Idempotency-Key") String idempotencyKey) {
+        MediaUploadIntentResponse response = mediaService.createDirectUploadIntent(
+                guestContext.getGuest(), request, idempotencyKey);
+        return Response.status(Response.Status.CREATED).entity(response).build();
+    }
+
+    @POST
+    @Path("/upload-intents/{mediaId}/complete")
+    public Response completeUpload(@PathParam("mediaId") UUID mediaId) {
+        Guest guest = guestContext.getGuest();
+        MediaService.DirectUploadVerification verification = mediaService.loadDirectUploadVerification(guest, mediaId);
+        R2StorageService.StoredObjectMetadata metadata = r2.head(verification.r2Key());
+        byte[] header = metadata == null || verification.completed() ? new byte[0] : r2.readPrefix(verification.r2Key(), 32);
+        MediaItemResponse response = mediaService.publishDirectUpload(guest, mediaId, metadata, header);
+        return Response.ok(response).build();
+    }
 
     @POST
     @Path("/upload")

@@ -2,6 +2,19 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    cpus: 0.60
+    mem_limit: 550m
+    pids_limit: 128
+    command:
+      - postgres
+      - -c
+      - max_connections=40
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=64MB
     environment:
       POSTGRES_DB: ${DB_NAME:-casamento}
       POSTGRES_USER: ${DB_USERNAME}
@@ -19,6 +32,9 @@ services:
   app:
     image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE to the image tag being deployed}
     restart: unless-stopped
+    cpus: 1.25
+    mem_limit: 900m
+    pids_limit: 128
     depends_on:
       db:
         condition: service_healthy
@@ -40,10 +56,20 @@ services:
       R2_BUCKET: ${R2_BUCKET}
       R2_REGION: ${R2_REGION:-auto}
       R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL}
+      R2_API_CALL_TIMEOUT: ${R2_API_CALL_TIMEOUT:-PT30S}
+      R2_API_ATTEMPT_TIMEOUT: ${R2_API_ATTEMPT_TIMEOUT:-PT10S}
+      R2_CONNECTION_TIMEOUT: ${R2_CONNECTION_TIMEOUT:-PT5S}
+      R2_SOCKET_TIMEOUT: ${R2_SOCKET_TIMEOUT:-PT20S}
+      R2_UPLOAD_URL_TTL: ${R2_UPLOAD_URL_TTL:-PT10M}
+      MEDIA_DELIVERY_BASE_URL: ${MEDIA_DELIVERY_BASE_URL:-}
+      MEDIA_DELIVERY_SIGNING_KEY: ${MEDIA_DELIVERY_SIGNING_KEY:-}
+      MEDIA_DELIVERY_URL_TTL: ${MEDIA_DELIVERY_URL_TTL:-PT5M}
+      MEDIA_REQUIRE_PRIVATE_DELIVERY: ${MEDIA_REQUIRE_PRIVATE_DELIVERY:-true}
+      MEDIA_MAX_PENDING_UPLOADS_PER_GUEST: ${MEDIA_MAX_PENDING_UPLOADS_PER_GUEST:-3}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       JOB_SECRET: ${JOB_SECRET}
-      JAVA_OPTS_APPEND: -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.proxy.proxy-address-forwarding=true
-      JAVA_MAX_MEM_RATIO: "70"
+      JAVA_OPTS_APPEND: -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.proxy.proxy-address-forwarding=true -XX:ActiveProcessorCount=2 -XX:MaxDirectMemorySize=96m -XX:+ExitOnOutOfMemoryError
+      JAVA_MAX_MEM_RATIO: "55"
     volumes:
       - ./keys:/deployments/keys:ro
     ports:

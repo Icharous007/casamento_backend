@@ -128,6 +128,16 @@ chmod 600 privateKey.pem
 chmod 644 publicKey.pem
 ```
 
+Antes de divulgar o QR/link, ative explicitamente o evento. O perfil de produção bloqueia novos cadastros em eventos `DRAFT`:
+
+```bash
+docker compose --env-file /opt/casamento/.env -f /opt/casamento/docker-compose.prod.yml \
+	exec -T db psql -U "$DB_USERNAME" -d "${DB_NAME:-casamento}" \
+	-c "UPDATE events SET status = 'ACTIVE' WHERE slug = 'casamento-2027';"
+```
+
+Configure também o Worker privado e o CORS de upload direto descritos em [R2_SETUP.md](R2_SETUP.md). Em produção, `R2_PUBLIC_BASE_URL` deve ficar vazio e `MEDIA_DELIVERY_BASE_URL`/`MEDIA_DELIVERY_SIGNING_KEY` são obrigatórios.
+
 ## 6. Criar e publicar imagem Docker do backend
 
 Execute na maquina de desenvolvimento, dentro de `casamento_backend`, nunca na VPS. O modo JVM e o recomendado inicialmente.

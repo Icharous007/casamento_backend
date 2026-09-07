@@ -1,6 +1,9 @@
 package br.com.casamento.auth.filter;
 
 import br.com.casamento.common.dto.ErrorResponse;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Priority;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
@@ -13,7 +16,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.time.Instant;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Simple in-memory rate limiter for sensitive endpoints.
@@ -28,13 +31,24 @@ public class RateLimitFilter implements ContainerRequestFilter {
     private static final long WINDOW_MILLIS = 60_000L;
 
     /** clientKey → [count, windowStart] */
-    private final ConcurrentHashMap<String, long[]> counters = new ConcurrentHashMap<>();
+    private Cache<String, long[]> counters;
 
     @ConfigProperty(name = "app.rate-limit.guest-resolve", defaultValue = "10")
     int guestResolveLimit;
 
     @ConfigProperty(name = "app.rate-limit.admin-login", defaultValue = "10")
     int adminLoginLimit;
+
+    @ConfigProperty(name = "app.rate-limit.max-tracked-clients", defaultValue = "10000")
+    long maxTrackedClients;
+
+    @PostConstruct
+    void initializeCache() {
+        counters = Caffeine.newBuilder()
+                .maximumSize(maxTrackedClients)
+                .expireAfterAccess(2, TimeUnit.MINUTES)
+                .build();
+    }
 
     @Override
     public void filter(ContainerRequestContext ctx) {
@@ -43,7 +57,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
         String clientKey = clientIp(ctx) + "|" + path;
 
         long now = Instant.now().toEpochMilli();
-        long[] entry = counters.compute(clientKey, (k, v) -> {
+        long[] entry = counters.asMap().compute(clientKey, (k, v) -> {
             if (v == null || now - v[1] >= WINDOW_MILLIS) {
                 return new long[]{1, now};
             }

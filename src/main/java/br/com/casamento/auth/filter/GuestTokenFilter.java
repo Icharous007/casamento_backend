@@ -53,6 +53,9 @@ public class GuestTokenFilter implements ContainerRequestFilter {
         }
 
         Guest guest = accessToken.guest;
+        if (!"ACTIVE".equals(guest.status)) {
+            throw AppException.accessDenied("Acesso do convidado indisponível.");
+        }
         GuestProfile profile = (GuestProfile) resolved[1];
         guestContext.populate(guest, profile);
     }
