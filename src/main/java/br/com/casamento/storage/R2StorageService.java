@@ -48,6 +48,7 @@ public class R2StorageService {
     private final String publicBaseUrl;
     private final String mediaDeliveryBaseUrl;
     private final String mediaDeliverySigningKey;
+    private final boolean requirePrivateDelivery;
     private final Duration uploadUrlTtl;
     private final Duration deliveryUrlTtl;
 
@@ -78,10 +79,11 @@ public class R2StorageService {
             this.publicBaseUrl = normalizeBaseUrl(publicBaseUrl);
             this.mediaDeliveryBaseUrl = normalizeBaseUrl(mediaDeliveryBaseUrl.orElse(null));
             this.mediaDeliverySigningKey = mediaDeliverySigningKey.orElse("");
+            this.requirePrivateDelivery = requirePrivateDelivery;
             this.uploadUrlTtl = uploadUrlTtl;
             this.deliveryUrlTtl = deliveryUrlTtl;
             if (requirePrivateDelivery && (this.mediaDeliveryBaseUrl == null || this.mediaDeliverySigningKey.isBlank()
-                || this.publicBaseUrl != null)) {
+                || this.publicBaseUrl == null)) {
                 throw new IllegalStateException("Private media delivery requires MEDIA_DELIVERY_BASE_URL and "
                     + "MEDIA_DELIVERY_SIGNING_KEY with R2_PUBLIC_BASE_URL unset.");
             }
@@ -207,7 +209,7 @@ public class R2StorageService {
      * or when using a custom domain. Falls back to pre-signed URL pattern if needed.
      */
     public String publicUrl(String key) {
-        if (mediaDeliveryBaseUrl != null && !mediaDeliverySigningKey.isBlank()) {
+        if (requirePrivateDelivery && mediaDeliveryBaseUrl != null && !mediaDeliverySigningKey.isBlank()) {
             long expiresAt = Instant.now().plus(deliveryUrlTtl).getEpochSecond();
             String signature = signDeliveryKey(key, expiresAt);
             return mediaDeliveryBaseUrl + "/" + encodeKey(key)

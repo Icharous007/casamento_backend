@@ -80,7 +80,7 @@
 # You can find more information about the UBI base runtime images and their configuration here:
 # https://rh-openjdk.github.io/redhat-openjdk-containers/
 ###
-FROM registry.access.redhat.com/ubi8/openjdk-21:1.23
+FROM eclipse-temurin:21-jre
 
 ENV LANGUAGE='en_US:en'
 
@@ -97,9 +97,8 @@ COPY --chown=185 target/quarkus-app/quarkus/ /deployments/quarkus/
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=5s --start-period=45s --retries=6 \
 	CMD curl --fail --silent http://127.0.0.1:8080/q/health/live || exit 1
-USER 185
 ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
 ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
 
-ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]
+ENTRYPOINT [ "sh", "-c", "exec java $JAVA_OPTS $JAVA_OPTS_APPEND -cp . -jar /deployments/quarkus-run.jar" ]
 

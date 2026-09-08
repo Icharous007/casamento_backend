@@ -68,7 +68,7 @@ services:
       MEDIA_MAX_PENDING_UPLOADS_PER_GUEST: ${MEDIA_MAX_PENDING_UPLOADS_PER_GUEST:-3}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       JOB_SECRET: ${JOB_SECRET}
-      JAVA_OPTS_APPEND: -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.proxy.proxy-address-forwarding=true -XX:ActiveProcessorCount=2 -XX:MaxDirectMemorySize=96m -XX:+ExitOnOutOfMemoryError
+      JAVA_OPTS_APPEND: -Djava.library.path=/tmp:/usr/java/packages/lib:/usr/lib64:/lib64:/lib -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.proxy.proxy-address-forwarding=true -XX:ActiveProcessorCount=2 -XX:MaxDirectMemorySize=96m -XX:+ExitOnOutOfMemoryError
       JAVA_MAX_MEM_RATIO: "55"
     volumes:
       - ./keys:/deployments/keys:ro

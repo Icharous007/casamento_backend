@@ -22,7 +22,7 @@ INSERT INTO events (
     gen_random_uuid(),
     'casamento-2027',
     'Casamento',
-    'Noivo & Noiva',
+    'Gustavo & Maria Luiza',
     '2027-01-30 19:00:00-03:00',
     'Local do Evento',
     'Endereço do evento',

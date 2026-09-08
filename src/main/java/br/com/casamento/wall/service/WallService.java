@@ -44,17 +44,15 @@ public class WallService {
             throw AppException.badRequest("AUDIO_TOO_LONG",
                     "Áudio deve ter no máximo 60 segundos.");
         }
-        UUID postId = UUID.randomUUID();
-        String r2Key = "wall/" + guest.event.id + "/" + postId + ".audio";
-        r2.upload(r2Key, audioData, fileSize, contentType != null ? contentType : "audio/mpeg");
-
         WallPost post = new WallPost();
-        post.id = postId;
         post.event = guest.event;
         post.guest = guest;
         post.postType = "AUDIO";
-        post.r2AudioKey = r2Key;
         post.persist();
+
+        String r2Key = "wall/" + guest.event.id + "/" + post.id + ".audio";
+        r2.upload(r2Key, audioData, fileSize, contentType != null ? contentType : "audio/mpeg");
+        post.r2AudioKey = r2Key;
 
         String audioUrl = r2.publicUrl(r2Key);
         return WallPostResponse.from(post, audioUrl);
