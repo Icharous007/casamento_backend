@@ -99,6 +99,8 @@ public class GuestPartyService {
             throw AppException.badRequest("NAME_EMPTY", "Nome não pode estar vazio.");
         }
 
+        validateAddRsvp(request);
+
         // Self-check: cannot add self
         if (request.phone() != null) {
             String phoneE164 = phoneNumberService.normalize(request.phone());
@@ -109,7 +111,7 @@ public class GuestPartyService {
 
         // Case 1: No phone -> always create new managed child
         if (request.phone() == null || request.phone().isBlank()) {
-            return createManagedGuest(manager, event, name, null, request.guestType(), request.age());
+            return createManagedGuest(manager, event, name, null, request);
         }
 
         // Case 2: With phone -> lookup existing
@@ -122,7 +124,7 @@ public class GuestPartyService {
 
         if (existing == null) {
             // Case 2a: Not found -> create new, managed by caller
-            return createManagedGuest(manager, event, name, phoneE164, request.guestType(), request.age());
+            return createManagedGuest(manager, event, name, phoneE164, request);
         }
 
         // Case 2b: Existing guest with active self-access token -> block
@@ -142,6 +144,7 @@ public class GuestPartyService {
             existing.name = name;
             existing.guestType = request.guestType();
             existing.age = request.age();
+            RsvpResponse response = rsvpService.upsert(existing, event, toRsvpRequest(request), manager);
             return toResponse(existing, Rsvp.findByGuest(existing), false, true, manager.name);
         }
 
@@ -150,6 +153,7 @@ public class GuestPartyService {
             existing.name = name;
             existing.guestType = request.guestType();
             existing.age = request.age();
+            rsvpService.upsert(existing, event, toRsvpRequest(request), manager);
             return toResponse(existing, Rsvp.findByGuest(existing), false, true, manager.name);
         }
 
@@ -247,21 +251,45 @@ public class GuestPartyService {
             Event event,
             String name,
             String phoneE164,
-            String guestType,
-            Short age
+            AddPartyMemberRequest request
     ) {
         Guest newGuest = new Guest();
         newGuest.event = event;
         newGuest.name = name;
         newGuest.phoneE164 = phoneE164;
-        newGuest.guestType = guestType;
-        newGuest.age = age;
+        newGuest.guestType = request.guestType();
+        newGuest.age = request.age();
         newGuest.managedByGuest = manager;
         newGuest.source = "MANAGED";
         newGuest.status = "ACTIVE";
         newGuest.persist();
 
-        return toResponse(newGuest, null, false, true, manager.name);
+        rsvpService.upsert(newGuest, event, toRsvpRequest(request), manager);
+
+        return toResponse(newGuest, Rsvp.findByGuest(newGuest), false, true, manager.name);
+    }
+
+    private void validateAddRsvp(AddPartyMemberRequest request) {
+        if (request.attendanceStatus() == null || !request.attendanceStatus().matches("ATTENDING|DECLINED")) {
+            throw AppException.badRequest("ATTENDANCE_REQUIRED", "Informe se a pessoa irá ao evento.");
+        }
+        requireAnswer(request.dietaryRestrictions(), "DIETARY_REQUIRED", "Informe as restrições alimentares ou escreva Não possui.");
+        requireAnswer(request.allergies(), "ALLERGIES_REQUIRED", "Informe as alergias ou escreva Não possui.");
+        requireAnswer(request.additionalInfo(), "ADDITIONAL_INFO_REQUIRED", "Informe dados adicionais ou escreva Não se aplica.");
+        if ("CHILD".equals(request.guestType()) && (request.age() == null || request.age() < 0 || request.age() > 120)) {
+            throw AppException.badRequest("AGE_REQUIRED", "Informe uma idade válida para a criança.");
+        }
+    }
+
+    private void requireAnswer(String value, String code, String message) {
+        if (value == null || value.isBlank()) {
+            throw AppException.badRequest(code, message);
+        }
+    }
+
+    private RsvpRequest toRsvpRequest(AddPartyMemberRequest request) {
+        return new RsvpRequest(request.attendanceStatus(), request.dietaryRestrictions(),
+                request.allergies(), request.additionalInfo());
     }
 
     private PartyMemberResponse toResponse(
