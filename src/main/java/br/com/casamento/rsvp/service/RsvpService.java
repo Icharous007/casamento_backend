@@ -48,6 +48,9 @@ public class RsvpService {
         return new RsvpResponse(
                 guest.id.toString(),
                 rsvp.response,
+            rsvp.dietaryRestrictions,
+            rsvp.allergies,
+            rsvp.additionalInfo,
                 rsvp.respondedAt,
                 rsvp.updatedAt
         );

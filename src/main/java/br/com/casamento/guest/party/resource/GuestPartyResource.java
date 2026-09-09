@@ -86,11 +86,7 @@ public class GuestPartyResource {
         Event event = Event.findById(eventId);
         if (event == null) throw new WebApplicationException(401);
 
-        partyService.confirmRsvp(callerId, targetGuestId, request.attendanceStatus(), event);
-        return Response.ok(Map.of(
-                "guestId", targetGuestId.toString(),
-                "status", request.attendanceStatus()
-        )).build();
+        return Response.ok(partyService.confirmRsvp(callerId, targetGuestId, request, event)).build();
     }
 
     /**

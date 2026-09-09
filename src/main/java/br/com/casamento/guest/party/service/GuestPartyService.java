@@ -8,6 +8,9 @@ import br.com.casamento.domain.rsvp.Rsvp;
 import br.com.casamento.guest.party.dto.AddPartyMemberRequest;
 import br.com.casamento.guest.party.dto.PartyMemberResponse;
 import br.com.casamento.guest.service.PhoneNumberService;
+import br.com.casamento.rsvp.dto.RsvpRequest;
+import br.com.casamento.rsvp.dto.RsvpResponse;
+import br.com.casamento.rsvp.service.RsvpService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
@@ -28,6 +31,9 @@ public class GuestPartyService {
 
     @Inject
     EntityManager entityManager;
+
+    @Inject
+    RsvpService rsvpService;
 
     /**
      * Lists all party members for the authenticated guest:
@@ -158,7 +164,7 @@ public class GuestPartyService {
      * Confirms RSVP on behalf of a managed guest.
      */
     @Transactional
-    public void confirmRsvp(UUID managerId, UUID targetGuestId, String response, Event event) {
+    public RsvpResponse confirmRsvp(UUID managerId, UUID targetGuestId, RsvpRequest request, Event event) {
         // Authorize: manager must be the one managing target, or target == manager (self)
         Guest manager = Guest.findById(managerId);
         Guest target = Guest.findById(targetGuestId);
@@ -178,17 +184,18 @@ public class GuestPartyService {
             throw AppException.rsvpDeadlineExpired();
         }
 
-        // Find or create RSVP
-        Rsvp rsvp = Rsvp.findByGuest(target);
-        if (rsvp == null) {
-            rsvp = new Rsvp();
-            rsvp.guest = target;
-            rsvp.event = event;
+        RsvpResponse response = rsvpService.upsert(target, event, request, manager);
+        if ("DECLINED".equals(request.attendanceStatus())) {
+            return response;
         }
+        return response;
+    }
 
-        rsvp.response = response;
-        rsvp.confirmedByGuest = manager;
-        rsvp.persist();
+    /** Backward-compatible overload for callers that only submit attendance. */
+    @Transactional
+    public RsvpResponse confirmRsvp(UUID managerId, UUID targetGuestId, String response, Event event) {
+        return confirmRsvp(managerId, targetGuestId,
+                new RsvpRequest(response, null, null, null), event);
     }
 
     /**
@@ -265,6 +272,8 @@ public class GuestPartyService {
             String managedByName
     ) {
         String rsvpStatus = rsvp != null ? rsvp.response : "PENDING";
+        boolean selfConfirmationSuggested = "CHILD".equals(guest.guestType)
+            && guest.phoneE164 != null && !guest.phoneE164.isBlank();
         return new PartyMemberResponse(
                 guest.id.toString(),
                 guest.name,
@@ -272,6 +281,10 @@ public class GuestPartyService {
                 guest.guestType,
                 guest.age,
                 rsvpStatus,
+                rsvp != null ? rsvp.dietaryRestrictions : null,
+                rsvp != null ? rsvp.allergies : null,
+                rsvp != null ? rsvp.additionalInfo : null,
+                selfConfirmationSuggested,
                 isSelf,
                 managedByMe,
                 managedByName,

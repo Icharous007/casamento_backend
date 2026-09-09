@@ -38,6 +38,9 @@ public class AdminRsvpResource {
                 .map(r -> new RsvpResponse(
                         r.guest.id.toString(),
                         r.response,
+                        r.dietaryRestrictions,
+                        r.allergies,
+                        r.additionalInfo,
                         r.respondedAt,
                         r.updatedAt
                 ))
