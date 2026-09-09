@@ -38,7 +38,7 @@ public class Guest extends PanacheEntityBase {
     public Guest managedByGuest;
 
     /** ADULT | CHILD */
-    @Column(nullable = false, length = 10)
+    @Column(name = "guest_type", nullable = false, length = 10)
     public String guestType = "ADULT";
 
     /** Age of guest (optional, for children or logistics) */
