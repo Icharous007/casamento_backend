@@ -17,6 +17,11 @@ public class RsvpService {
 
     @Transactional
     public RsvpResponse upsert(Guest guest, Event event, RsvpRequest request) {
+        return upsert(guest, event, request, guest);
+    }
+
+    @Transactional
+    public RsvpResponse upsert(Guest guest, Event event, RsvpRequest request, Guest confirmedByGuest) {
         if (event.rsvpDeadlineAt != null && OffsetDateTime.now().isAfter(event.rsvpDeadlineAt)) {
             throw AppException.rsvpDeadlineExpired();
         }
@@ -34,6 +39,7 @@ public class RsvpService {
         rsvp.dietaryRestrictions = request.dietaryRestrictions();
         rsvp.allergies = request.allergies();
         rsvp.additionalInfo = request.additionalInfo();
+        rsvp.confirmedByGuest = confirmedByGuest;
 
         if (isNew) {
             rsvp.persist();

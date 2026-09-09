@@ -108,6 +108,8 @@ public class GuestAccessResource {
                                 + "VALUES (?1, ?2, ?3, 'SELF_REGISTERED', 'ACTIVE') "
                                 + "ON CONFLICT (event_id, phone_e164) WHERE phone_e164 IS NOT NULL "
                                 + "DO UPDATE SET name = EXCLUDED.name, "
+                                + "source = 'SELF_REGISTERED', "
+                                + "managed_by_guest_id = NULL, "
                                 + "status = CASE WHEN guests.status IN ('ACTIVE', 'BLOCKED') "
                                 + "THEN guests.status ELSE 'ACTIVE' END "
                                 + "RETURNING id")

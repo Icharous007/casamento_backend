@@ -11,5 +11,9 @@ public record GuestResponse(
         String accessToken,
         String qrCodeUrl,
         String rsvpStatus,
+        String guestType,
+        Short age,
+        String managedByGuestId,
+        String managedByName,
         OffsetDateTime createdAt
 ) {}

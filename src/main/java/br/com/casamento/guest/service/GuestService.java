@@ -52,6 +52,8 @@ public class GuestService {
         String eventQrUrl = frontendUrl + "/save-the-date?event="
                 + (guest.event != null ? guest.event.slug : "");
         String rsvpStatus = rsvp != null ? rsvp.response : "PENDING";
+        String managedByGuestId = guest.managedByGuest != null ? guest.managedByGuest.id.toString() : null;
+        String managedByName = guest.managedByGuest != null ? guest.managedByGuest.name : null;
 
         return new GuestResponse(
                 guest.id.toString(),
@@ -62,6 +64,10 @@ public class GuestService {
                 rawToken,
                 eventQrUrl,
                 rsvpStatus,
+                guest.guestType,
+                guest.age,
+                managedByGuestId,
+                managedByName,
                 guest.createdAt
         );
     }

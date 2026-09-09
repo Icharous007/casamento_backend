@@ -32,6 +32,19 @@ public class Guest extends PanacheEntityBase {
     @Column(nullable = false, length = 30)
     public String source = "IMPORTED";
 
+    /** Guest who manages this guest (parent managing child, etc.) */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "managed_by_guest_id")
+    public Guest managedByGuest;
+
+    /** ADULT | CHILD */
+    @Column(nullable = false, length = 10)
+    public String guestType = "ADULT";
+
+    /** Age of guest (optional, for children or logistics) */
+    @Column(nullable = true)
+    public Short age;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     public OffsetDateTime createdAt;
 

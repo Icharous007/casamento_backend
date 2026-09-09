@@ -36,6 +36,11 @@ public class Rsvp extends PanacheEntityBase {
     @Column(name = "additional_info", columnDefinition = "TEXT")
     public String additionalInfo;
 
+    /** Guest who confirmed RSVP on behalf of this guest (for audit/proxy confirmations) */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "confirmed_by_guest_id")
+    public Guest confirmedByGuest;
+
     @Column(name = "responded_at", nullable = false)
     public OffsetDateTime respondedAt;
 
