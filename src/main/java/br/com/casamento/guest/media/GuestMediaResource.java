@@ -69,7 +69,8 @@ public class GuestMediaResource {
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @Transactional
     public Response upload(
-            @FormParam("file") FileUpload file
+            @FormParam("file") FileUpload file,
+            @FormParam("caption") String caption
     ) throws IOException {
         if (file == null) {
             LOG.infof("media_upload event=upload.failure stage=request errorCode=FILE_REQUIRED traceId=%s outcome=failure",
@@ -90,7 +91,7 @@ public class GuestMediaResource {
                 ? file.contentType()
                 : "application/octet-stream";
         MediaItemResponse response = mediaService.upload(
-                guest, file.fileName(), contentType, size, file.filePath());
+            guest, file.fileName(), contentType, size, file.filePath(), caption);
         return Response.status(Response.Status.CREATED).entity(response).build();
     }
 

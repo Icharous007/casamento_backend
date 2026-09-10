@@ -74,8 +74,9 @@ public class MediaService {
 
     @Transactional
     public MediaItemResponse upload(Guest guest, String filename, String contentType,
-                                    long fileSize, Path filePath) throws IOException {
+                                    long fileSize, Path filePath, String caption) throws IOException {
         ensureGalleryWritable(guest.event.id);
+        String normalizedCaption = normalizeCaption(caption);
         long startedAt = System.nanoTime();
         UUID mediaId = UUID.randomUUID();
         logUpload("upload.start", guest, mediaId, contentType, fileSize, null, null);
@@ -111,6 +112,7 @@ public class MediaService {
         asset.r2Key = r2Key;
         asset.originalFilename = filename;
         asset.contentType = contentType;
+        asset.caption = normalizedCaption;
         asset.fileSizeBytes = fileSize;
         asset.status = "ACTIVE";
         asset.id = mediaId;
@@ -209,11 +211,13 @@ public class MediaService {
 
         String contentType = normalizeContentType(request.contentType());
         long fileSize = request.fileSizeBytes();
+        String normalizedCaption = normalizeCaption(request.caption());
         String mediaType = detectMediaType(contentType, fileSize);
         Guest guest = Guest.findById(authenticatedGuest.id);
         MediaUploadIntent existing = MediaUploadIntent.findByGuestAndIdempotencyKey(guest.id, idempotencyKey);
         if (existing != null) {
-            if (existing.expectedFileSize != fileSize || !existing.expectedContentType.equals(contentType)) {
+            if (existing.expectedFileSize != fileSize || !existing.expectedContentType.equals(contentType)
+                    || !java.util.Objects.equals(existing.media.caption, normalizedCaption)) {
                 throw AppException.conflict("IDEMPOTENCY_KEY_REUSED", "A chave de envio já pertence a outro arquivo.");
             }
             if ("COMPLETED".equals(existing.status)) {
@@ -239,6 +243,7 @@ public class MediaService {
         asset.r2Key = buildKey(event.id, guest.id, mediaId, mediaType, extensionFor(contentType));
         asset.originalFilename = request.filename().strip();
         asset.contentType = contentType;
+        asset.caption = normalizedCaption;
         asset.fileSizeBytes = fileSize;
         asset.persist();
 
@@ -350,6 +355,20 @@ public class MediaService {
     private String normalizeContentType(String contentType) {
         int separator = contentType.indexOf(';');
         return (separator >= 0 ? contentType.substring(0, separator) : contentType).trim().toLowerCase();
+    }
+
+    private String normalizeCaption(String caption) {
+        if (caption == null) {
+            return null;
+        }
+        String normalized = caption.strip();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        if (normalized.codePointCount(0, normalized.length()) > 500) {
+            throw AppException.badRequest("CAPTION_TOO_LONG", "A legenda deve ter no máximo 500 caracteres.");
+        }
+        return normalized;
     }
 
     private boolean hasExpectedSignature(String contentType, byte[] header) {

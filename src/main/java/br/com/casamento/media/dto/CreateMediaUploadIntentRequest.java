@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Size;
 public record CreateMediaUploadIntentRequest(
         @NotBlank @Size(max = 255) String filename,
         @NotBlank @Size(max = 100) String contentType,
-        @NotNull @Positive Long fileSizeBytes
+        @NotNull @Positive Long fileSizeBytes,
+        String caption
 ) {
 }

@@ -47,6 +47,9 @@ public class MediaAsset extends PanacheEntityBase {
     @Column(name = "content_type", length = 100)
     public String contentType;
 
+    @Column(length = 500)
+    public String caption;
+
     @Column(name = "file_size_bytes")
     public Long fileSizeBytes;
 
