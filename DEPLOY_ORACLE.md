@@ -16,8 +16,8 @@ O Nginx recebe trafego publico nas portas 80/443, serve o frontend e encaminha `
 
 A camada Always Free de maior capacidade da OCI (Ampere A1.Flex, ate 4 OCPU e 24 GB de RAM gratis) roda em **ARM/aarch64**, diferente da VPS x86_64 usada no guia Locaweb. Isso afeta apenas o **build da imagem Docker do backend** (secao 7):
 
-- O comentario em [src/main/docker/Dockerfile.jvm](src/main/docker/Dockerfile.jvm) documenta o build atual com `-Djavacpp.platform=linux-x86_64`, usado pelo `MediaVariantService` para empacotar os binarios nativos ffmpeg do JavaCV. Para ARM, o parametro precisa virar `-Djavacpp.platform=linux-arm64`.
-- A imagem base `registry.access.redhat.com/ubi8/openjdk-21:1.23` precisa ter variante `linux/arm64`. **Confirme antes do primeiro build** (comando na secao 7). Se nao houver suporte multi-arch, use uma imagem base alternativa multi-arch (por exemplo `eclipse-temurin:21-jre`) so para o deploy Oracle.
+- O comentario em [src/main/docker/Dockerfile.jvm](src/main/docker/Dockerfile.jvm) documenta o build com `-Djavacpp.platform=linux-arm64`, usado pelo `MediaVariantService` para empacotar os binarios nativos ffmpeg do JavaCV.
+- A imagem base atual `eclipse-temurin:21-jre` precisa ter variante `linux/arm64`. **Confirme antes do primeiro build** (comando na secao 7). Se a imagem mudar, valide novamente o suporte multi-arch antes do deploy.
 - O restante do pipeline (docker-compose, scripts bash, Nginx, certbot) e independente de arquitetura e nao muda.
 
 ## 1. Antes de contratar/criar
@@ -200,10 +200,10 @@ Execute na maquina de desenvolvimento, dentro de `casamento_backend`, nunca na i
 1. Confirme que a imagem base tem variante `arm64` antes do primeiro build real:
 
 ```bash
-docker manifest inspect registry.access.redhat.com/ubi8/openjdk-21:1.23 | grep -A2 arm64
+docker manifest inspect eclipse-temurin:21-jre | grep -A2 arm64
 ```
 
-   Se o comando nao retornar nada, troque a `FROM` de [src/main/docker/Dockerfile.jvm](src/main/docker/Dockerfile.jvm) por uma imagem multi-arch equivalente (ex.: `eclipse-temurin:21-jre`) apenas para este deploy, ou mantenha um Dockerfile alternativo dedicado a ARM.
+   Se o comando nao retornar nada, troque a `FROM` de [src/main/docker/Dockerfile.jvm](src/main/docker/Dockerfile.jvm) por outra imagem multi-arch equivalente, ou mantenha um Dockerfile alternativo dedicado a ARM.
 
 2. Habilite o `buildx` (uma vez por maquina) e confirme suporte a `linux/arm64`:
 

@@ -86,7 +86,7 @@ ENV LANGUAGE='en_US:en'
 
 # Video poster + HEIC conversion (MediaVariantService) use JavaCV's bundled ffmpeg
 # natives, no OS-level ffmpeg install needed. Build with
-# -Djavacpp.platform=linux-x86_64 so only the linux native jar ships in target/quarkus-app/lib.
+# -Djavacpp.platform=linux-arm64 so only the ARM64 native jar ships in target/quarkus-app/lib.
 
 # We make four distinct layers so if there are application changes the library layers can be re-used
 COPY --chown=185 target/quarkus-app/lib/ /deployments/lib/
