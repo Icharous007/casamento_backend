@@ -32,7 +32,7 @@ public final class TestDataFactory {
             + Math.abs(UUID.randomUUID().getMostSignificantBits() % 89999999999L));
         guest.phoneE164 = digits.substring(0, 2) + " "
             + digits.substring(2, 7) + "-" + digits.substring(7);
-        guest.status = "INVITED";
+        guest.status = "ACTIVE";
         guest.source = "IMPORTED";
         guest.persist();
         return guest;

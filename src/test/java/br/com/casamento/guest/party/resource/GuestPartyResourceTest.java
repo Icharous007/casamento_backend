@@ -1,12 +1,8 @@
 package br.com.casamento.guest.party.resource;
 
-import br.com.casamento.domain.event.Event;
-import br.com.casamento.domain.guest.Guest;
 import br.com.casamento.guest.party.dto.AddPartyMemberRequest;
 import br.com.casamento.support.GuestAuthTestSupport;
-import br.com.casamento.support.TestDataFactory;
 import io.quarkus.test.junit.QuarkusTest;
-import io.restassured.RestAssured;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -72,7 +68,7 @@ class GuestPartyResourceTest {
                 .body("name", equalTo("João Silva"))
                 .body("guestType", equalTo("CHILD"))
                 .body("age", equalTo(7))
-                .body("rsvpStatus", equalTo("PENDING"))
+                .body("rsvpStatus", equalTo("DECLINED"))
                 .body("managedByMe", equalTo(true));
     }
 
