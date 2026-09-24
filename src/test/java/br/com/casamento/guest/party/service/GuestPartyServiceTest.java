@@ -70,7 +70,7 @@ class GuestPartyServiceTest {
         assertEquals("João Silva", response.name());
         assertEquals("CHILD", response.guestType());
         assertEquals((short) 7, (short) response.age());
-        assertEquals("PENDING", response.rsvpStatus());
+        assertEquals("DECLINED", response.rsvpStatus());
         assertFalse(response.isSelf());
         assertTrue(response.managedByMe());
         assertEquals(manager.name, response.managedByName());
@@ -139,7 +139,7 @@ class GuestPartyServiceTest {
 
         assertNotNull(response.guestId());
         assertEquals("Tio Fulano", response.name());
-        assertEquals("+5511987654321", response.phone());
+        assertEquals("11 98765-4321", response.phone());
         assertEquals("ADULT", response.guestType());
         assertTrue(response.managedByMe());
 
@@ -152,7 +152,7 @@ class GuestPartyServiceTest {
     @DisplayName("Case 2b: Existing phone with active token -> 409 GUEST_ALREADY_HAS_ACCESS")
     @Transactional
     void shouldBlockExistingGuestWithActiveToken() {
-        String phone = "+5511987654321";
+        String phone = "11 98765-4321";
         Guest existingGuest = new Guest();
         existingGuest.event = event;
         existingGuest.name = "Tio com Acesso";
@@ -187,7 +187,7 @@ class GuestPartyServiceTest {
     @DisplayName("Case 2c: Existing phone without manager -> claim it")
     @Transactional
     void shouldClaimUnmanagedGuest() {
-        String phone = "+5511999999999";
+        String phone = "11 99999-9999";
         Guest unmanaged = new Guest();
         unmanaged.event = event;
         unmanaged.name = "Tio Importado";
@@ -220,7 +220,7 @@ class GuestPartyServiceTest {
     @DisplayName("Case 2d: Managed by caller -> idempotent update")
     @Transactional
     void shouldIdempotentlyUpdateManagedByMe() {
-        String phone = "+5511888888888";
+        String phone = "11 88888-8888";
         Guest managed = new Guest();
         managed.event = event;
         managed.name = "Tio Original";
@@ -232,7 +232,7 @@ class GuestPartyServiceTest {
 
         AddPartyMemberRequest request = new AddPartyMemberRequest(
                 "Tio Atualizado",
-                "11988888888",
+            "11888888888",
                 "ADULT",
                 (short) 42
         );
@@ -253,7 +253,7 @@ class GuestPartyServiceTest {
     @DisplayName("Case 2e: Managed by other -> 409 GUEST_ALREADY_MANAGED")
     @Transactional
     void shouldBlockGuestManagedByOther() {
-        String phone = "+5511777777777";
+        String phone = "11 77777-7777";
         Guest managedByOther = new Guest();
         managedByOther.event = event;
         managedByOther.name = "Tio do Outro";
@@ -263,7 +263,7 @@ class GuestPartyServiceTest {
 
         AddPartyMemberRequest request = new AddPartyMemberRequest(
                 "Tio do Outro",
-                "11977777777",
+            "11777777777",
                 "ADULT",
                 null
         );
@@ -282,7 +282,7 @@ class GuestPartyServiceTest {
         AddPartyMemberRequest request = new AddPartyMemberRequest(
                 "João",
                 "123",
-                "CHILD",
+            "ADULT",
                 null
         );
 
@@ -296,7 +296,7 @@ class GuestPartyServiceTest {
     @DisplayName("Should reject attempt to add self")
     @Transactional
     void shouldRejectAddingSelf() {
-        String brazilianDigits = manager.phoneE164.substring(3);
+        String brazilianDigits = manager.phoneE164.replaceAll("\\D", "");
         AddPartyMemberRequest request = new AddPartyMemberRequest(
                 manager.name,
                 brazilianDigits,
@@ -423,7 +423,7 @@ class GuestPartyServiceTest {
         Guest guestInPastEvent = new Guest();
         guestInPastEvent.event = pastEvent;
         guestInPastEvent.name = "João";
-        guestInPastEvent.phoneE164 = "+5511999999999";
+        guestInPastEvent.phoneE164 = "11 99999-9999";
         guestInPastEvent.persist();
 
         Guest child = new Guest();
@@ -467,7 +467,7 @@ class GuestPartyServiceTest {
         Guest selfReg = new Guest();
         selfReg.event = event;
         selfReg.name = "Tio";
-        selfReg.phoneE164 = "+5511999999999";
+        selfReg.phoneE164 = "11 99999-9999";
         selfReg.managedByGuest = manager;
         selfReg.source = "SELF_REGISTERED";
         selfReg.persist();

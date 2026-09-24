@@ -28,7 +28,10 @@ public final class TestDataFactory {
         Guest guest = new Guest();
         guest.event = event;
         guest.name = "Convidado " + UUID.randomUUID();
-        guest.phoneE164 = "+55" + (10000000000L + Math.abs(UUID.randomUUID().getMostSignificantBits() % 89999999999L));
+        String digits = String.valueOf(10000000000L
+            + Math.abs(UUID.randomUUID().getMostSignificantBits() % 89999999999L));
+        guest.phoneE164 = digits.substring(0, 2) + " "
+            + digits.substring(2, 7) + "-" + digits.substring(7);
         guest.status = "INVITED";
         guest.source = "IMPORTED";
         guest.persist();

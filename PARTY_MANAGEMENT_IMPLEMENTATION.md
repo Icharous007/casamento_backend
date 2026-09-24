@@ -260,7 +260,7 @@ Navegue para `/save-the-date?event=<slug>` (obter slug do admin)
 1. **Autorização:** Todos os endpoints checam `guestContext.getGuestId()` vs. caller
 2. **Rate limiting:** POST /api/v1/me/party usa `@RateLimited` (herdado do filter)
 3. **Prevenção de sequestro:** Bloquear (409) tentativa de gerenciar adulto que já tem token próprio
-4. **Validação:** PhoneNumberService.isValidE164 valida formato E.164
+4. **Validação:** PhoneNumberService.isValidPhone valida o formato local `xx xxxxx-xxxx`
 5. **Auditoria:** confirmed_by_guest_id tracks quem confirma
 
 ---

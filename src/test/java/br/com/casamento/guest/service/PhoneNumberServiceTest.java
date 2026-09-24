@@ -12,7 +12,6 @@ class PhoneNumberServiceTest {
     @BeforeEach
     void setUp() {
         service = new PhoneNumberService();
-        service.defaultCountryCode = "55";
     }
 
     @Test
@@ -22,16 +21,16 @@ class PhoneNumberServiceTest {
     }
 
     @Test
-    void normalizeShouldKeepExplicitE164() {
-        assertEquals("+5511987654321", service.normalize("+5511987654321"));
-        assertEquals("+441234567890", service.normalize("+44 1234 567890"));
+    void normalizeShouldRemoveBrazilianCountryCode() {
+        assertEquals("11 98765-4321", service.normalize("+55 11 98765-4321"));
+        assertEquals("11 98765-4321", service.normalize("5511987654321"));
+        assertEquals("11 98765-4321", service.normalize("+351 11 98765-4321"));
     }
 
     @Test
-    void normalizeShouldApplyBrazilDefaults() {
-        assertEquals("+5511987654321", service.normalize("11987654321"));
-        assertEquals("+5511987654321", service.normalize("(11) 98765-4321"));
-        assertEquals("+5511987654321", service.normalize("5511987654321"));
+    void normalizeShouldFormatLocalNumber() {
+        assertEquals("11 98765-4321", service.normalize("11987654321"));
+        assertEquals("11 98765-4321", service.normalize("(11) 98765-4321"));
     }
 
     @Test
@@ -40,11 +39,11 @@ class PhoneNumberServiceTest {
     }
 
     @Test
-    void isValidE164ShouldValidateExpectedPatterns() {
-        assertTrue(service.isValidE164("+5511987654321"));
-        assertTrue(service.isValidE164("+441234567890"));
-        assertFalse(service.isValidE164("5511987654321"));
-        assertFalse(service.isValidE164("+123"));
-        assertFalse(service.isValidE164(null));
+    void isValidPhoneShouldValidateExpectedPatterns() {
+        assertTrue(service.isValidPhone("11 98765-4321"));
+        assertFalse(service.isValidPhone("11987654321"));
+        assertFalse(service.isValidPhone("+5511987654321"));
+        assertFalse(service.isValidPhone("11 9876-4321"));
+        assertFalse(service.isValidPhone(null));
     }
 }

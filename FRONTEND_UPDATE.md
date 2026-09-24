@@ -44,7 +44,7 @@ O frontend deve ler `event` (slug) da query string.
 | Campo | Tipo | Obrigatório | Observação |
 |---|---|---|---|
 | `eventSlug` | string | ✅ | Slug do evento (lido da URL) |
-| `phone` | string | ✅ | Qualquer formato aceito (ex: `11 9 9999-8888`, `+5511999998888`). O backend normaliza para E.164. |
+| `phone` | string | ✅ | Aceita formatos locais ou com código do país (ex: `11 98765-4321`, `+55 11 98765-4321`). O backend normaliza para `xx xxxxx-xxxx`. |
 | `displayName` | string | ✅ | Nome ou apelido exibido na plataforma |
 | `acceptedTerms` | boolean | ✅ | Deve ser `true` para prosseguir |
 

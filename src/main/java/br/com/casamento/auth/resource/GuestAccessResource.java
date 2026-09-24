@@ -51,7 +51,7 @@ public class GuestAccessResource {
         }
 
         String phoneE164 = phoneNumberService.normalize(request.phone());
-        if (phoneE164 == null || !phoneNumberService.isValidE164(phoneE164)) {
+        if (phoneE164 == null || !phoneNumberService.isValidPhone(phoneE164)) {
             throw AppException.badRequest("PHONE_INVALID", "Número de telefone inválido.");
         }
 
