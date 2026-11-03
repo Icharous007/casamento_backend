@@ -32,7 +32,7 @@ class PublicBridalShowerResourceTest {
         item.event = event;
         item.title = "Jogo de panelas de teste";
         item.category = "BRIDAL_SHOWER";
-        item.priceAmount = new BigDecimal("25.00");
+        item.priceAmount = new BigDecimal("12.34");
         item.persist();
         giftId = item.id;
     }
@@ -52,7 +52,8 @@ class PublicBridalShowerResourceTest {
         .then()
                 .statusCode(200)
                 .body("amount", notNullValue())
-                .body("payload", containsString("540525.00"))
+                .body("amount", org.hamcrest.Matchers.equalTo(12.34f))
+                .body("payload", containsString("540512.34"))
                 .body("qrCodeBase64", notNullValue());
 
         Map<String, String> contribution = Map.of(
