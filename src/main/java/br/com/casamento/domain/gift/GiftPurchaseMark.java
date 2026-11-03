@@ -15,13 +15,31 @@ public class GiftPurchaseMark extends PanacheEntityBase {
     @Column(columnDefinition = "uuid")
     public UUID id;
 
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "gift_item_id", nullable = false, unique = true)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "gift_item_id", nullable = false)
     public GiftItem giftItem;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "guest_id", nullable = false)
+    @JoinColumn(name = "guest_id")
     public Guest guest;
+
+    @Column(name = "giver_name", length = 255)
+    public String giverName;
+
+    @Column(name = "giver_phone", length = 30)
+    public String giverPhone;
+
+    @Column(name = "giver_message", columnDefinition = "TEXT")
+    public String giverMessage;
+
+    @Column(name = "payment_method", nullable = false, length = 20)
+    public String paymentMethod = "MANUAL";
+
+    @Column(name = "paid_amount", precision = 10, scale = 2)
+    public java.math.BigDecimal paidAmount;
+
+    @Column(name = "payment_status", nullable = false, length = 20)
+    public String paymentStatus = "UNVERIFIED";
 
     @Column(name = "purchased_at", nullable = false, updatable = false)
     public OffsetDateTime purchasedAt;
@@ -31,7 +49,11 @@ public class GiftPurchaseMark extends PanacheEntityBase {
         purchasedAt = OffsetDateTime.now();
     }
 
+    public static java.util.List<GiftPurchaseMark> listByGiftItem(GiftItem item) {
+        return list("giftItem = ?1 ORDER BY purchasedAt DESC", item);
+    }
+
     public static GiftPurchaseMark findByGiftItem(GiftItem item) {
-        return find("giftItem", item).firstResult();
+        return find("giftItem = ?1 ORDER BY purchasedAt DESC", item).firstResult();
     }
 }

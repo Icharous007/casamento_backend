@@ -50,6 +50,18 @@ public class Event extends PanacheEntityBase {
     @Column(nullable = false, length = 50)
     public String timezone = "America/Sao_Paulo";
 
+    @Column(name = "pix_key", nullable = false, length = 150)
+    public String pixKey = "00115205152";
+
+    @Column(name = "pix_key_type", nullable = false, length = 20)
+    public String pixKeyType = "CPF";
+
+    @Column(name = "pix_merchant_name", length = 25)
+    public String pixMerchantName;
+
+    @Column(name = "pix_merchant_city", length = 15)
+    public String pixMerchantCity;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     public OffsetDateTime createdAt;
 

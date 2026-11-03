@@ -3,6 +3,7 @@ package br.com.casamento.domain.gift;
 import br.com.casamento.domain.event.Event;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -35,6 +36,12 @@ public class GiftItem extends PanacheEntityBase {
     @Column(name = "price_range", length = 50)
     public String priceRange;
 
+    @Column(name = "price_amount", precision = 10, scale = 2)
+    public BigDecimal priceAmount;
+
+    @Column(nullable = false, length = 20)
+    public String category = "WEDDING";
+
     @Column(name = "display_order", nullable = false)
     public int displayOrder = 0;
 
@@ -65,7 +72,15 @@ public class GiftItem extends PanacheEntityBase {
         return list("event.id = ?1 AND visibleToGuests = true AND status <> 'UNAVAILABLE' ORDER BY displayOrder ASC, createdAt ASC", eventId);
     }
 
+    public static List<GiftItem> listVisibleByEventAndCategory(UUID eventId, String category) {
+        return list("event.id = ?1 AND category = ?2 AND visibleToGuests = true AND status <> 'UNAVAILABLE' ORDER BY displayOrder ASC, createdAt ASC", eventId, category);
+    }
+
     public static List<GiftItem> listByEvent(UUID eventId) {
         return list("event.id = ?1 ORDER BY displayOrder ASC, createdAt ASC", eventId);
+    }
+
+    public static List<GiftItem> listByEventAndCategory(UUID eventId, String category) {
+        return list("event.id = ?1 AND category = ?2 ORDER BY displayOrder ASC, createdAt ASC", eventId, category);
     }
 }

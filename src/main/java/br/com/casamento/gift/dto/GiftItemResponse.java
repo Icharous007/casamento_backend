@@ -3,6 +3,7 @@ package br.com.casamento.gift.dto;
 import br.com.casamento.domain.gift.GiftItem;
 
 import java.util.UUID;
+import java.math.BigDecimal;
 
 public record GiftItemResponse(
         UUID id,
@@ -11,6 +12,8 @@ public record GiftItemResponse(
         String externalUrl,
         String imageUrl,
         String priceRange,
+        BigDecimal priceAmount,
+        String category,
         int displayOrder,
         String status
 ) {
@@ -22,6 +25,8 @@ public record GiftItemResponse(
                 item.externalUrl,
                 item.imageUrl,
                 item.priceRange,
+                item.priceAmount,
+                item.category,
                 item.displayOrder,
                 item.status
         );

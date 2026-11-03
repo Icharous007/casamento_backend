@@ -26,9 +26,10 @@ public class AdminGiftResource {
 
     @GET
     @Transactional
-    public Response list(@QueryParam("eventId") String eventId) {
+    public Response list(@QueryParam("eventId") String eventId,
+                         @QueryParam("category") @DefaultValue("WEDDING") String category) {
         Event event = loadEvent(eventId);
-        List<GiftItemAdminResponse> items = giftService.listForAdmin(event.id);
+        List<GiftItemAdminResponse> items = giftService.listForAdmin(event.id, category.toUpperCase());
         return Response.ok(items).build();
     }
 
