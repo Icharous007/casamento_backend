@@ -153,7 +153,7 @@ public class MediaService {
         return r2.publicUrl(asset.r2Key);
     }
 
-    private MediaItemResponse toResponse(MediaAsset asset, boolean likedByMe) {
+    MediaItemResponse toResponse(MediaAsset asset, boolean likedByMe) {
         String thumb = asset.r2ThumbKey != null ? r2.publicUrl(asset.r2ThumbKey) : null;
         String display = asset.r2DisplayKey != null ? r2.publicUrl(asset.r2DisplayKey) : null;
         return MediaItemResponse.from(asset, resolveServedUrl(asset), thumb, display, likedByMe);
@@ -423,7 +423,7 @@ public class MediaService {
                 "page", safePage, "pageSize", safePageSize, "total", total, "hasMore", hasMore);
     }
 
-    private Set<UUID> likedMediaIds(List<MediaAsset> assets, Guest guest) {
+    Set<UUID> likedMediaIds(List<MediaAsset> assets, Guest guest) {
         if (assets.isEmpty()) {
             return Set.of();
         }

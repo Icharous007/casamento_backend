@@ -2,6 +2,31 @@
 
 This project uses Quarkus, the Supersonic Subatomic Java Framework.
 
+## Gallery feed
+
+`GET /api/v1/media/feed?feedId=<uuid>&sort=random&cursor=0&pageSize=10`
+requires a guest token. Each request returns `items`, `nextCursor`, `hasMore`,
+and `galleryHidden`. Follow `nextCursor` with the same `feedId` and `sort`;
+the initial and subsequent batches contain at most 10 media items.
+
+The client generates a new UUID when opening or explicitly refreshing a feed.
+Migration `V016__gallery_feed_sessions.sql` stores an ordered UUID snapshot per
+guest/event for two hours. Re-fetching a page refreshes its URLs, counters and
+like state without changing the order. New uploads appear in a new feed;
+hidden/deleted media are excluded on each request. An expired session returns
+HTTP 410 (`FEED_EXPIRED`); the client must explicitly start a new feed.
+Expired snapshots are removed hourly after a one-day grace period.
+
+Sorts: `recent` (newest first), `popular` (most likes, then newest), and
+`random` (weighted random sampling without replacement). Random weights are
+`1 + ln(1 + likes) + 2 * ln(1 + comments)`: comments carry more weight, the
+logarithm limits popularity dominance, and unengaged media remain eligible.
+Only lightweight candidate metadata is scanned when creating the snapshot;
+media files are never downloaded by the feed endpoint. Snapshot creation is
+intended for event-sized galleries; larger deployments should measure this
+scan and snapshot storage before introducing precomputed ranking.
+The existing page-based `/api/v1/media` and admin APIs remain compatible.
+
 If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
 
 ## Running the application in dev mode

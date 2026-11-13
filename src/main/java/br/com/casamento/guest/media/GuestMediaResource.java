@@ -9,6 +9,7 @@ import br.com.casamento.media.dto.MediaCommentResponse;
 import br.com.casamento.media.dto.MediaItemResponse;
 import br.com.casamento.media.dto.MediaUploadIntentResponse;
 import br.com.casamento.media.service.MediaService;
+import br.com.casamento.media.service.MediaFeedService;
 import br.com.casamento.storage.R2StorageService;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -39,6 +40,9 @@ public class GuestMediaResource {
 
     @Inject
     MediaService mediaService;
+
+    @Inject
+    MediaFeedService mediaFeedService;
 
     @Inject
     R2StorageService r2;
@@ -101,11 +105,22 @@ public class GuestMediaResource {
     }
 
     @GET
+    @Path("/feed")
+    public Response feed(
+            @QueryParam("feedId") UUID feedId,
+            @QueryParam("sort") @DefaultValue("random") String sort,
+            @QueryParam("cursor") @DefaultValue("0") int cursor,
+            @QueryParam("pageSize") @DefaultValue("10") int pageSize
+    ) {
+        return Response.ok(mediaFeedService.list(guestContext.getGuest(), feedId, sort, cursor, pageSize)).build();
+    }
+
+    @GET
     @Transactional
     public Response gallery(
             @QueryParam("sort") @DefaultValue("recent") String sort,
             @QueryParam("page") @DefaultValue("1") int page,
-            @QueryParam("pageSize") @DefaultValue("12") int pageSize
+            @QueryParam("pageSize") @DefaultValue("10") int pageSize
     ) {
         Guest guest = guestContext.getGuest();
         Map<String, Object> result = mediaService.listGallery(
