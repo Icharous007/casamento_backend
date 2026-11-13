@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.random.RandomGenerator;
 
 @ApplicationScoped
@@ -104,7 +105,7 @@ public class MediaFeedService {
         session.eventId = guest.event.id;
         session.guestId = guest.id;
         session.sort = sort;
-        session.mediaIds = orderedIds(candidates, sort, RandomGenerator.getDefault());
+        session.mediaIds = orderedIds(candidates, sort, ThreadLocalRandom.current());
         session.expiresAt = now.plusHours(2);
         session.persist();
         return session;

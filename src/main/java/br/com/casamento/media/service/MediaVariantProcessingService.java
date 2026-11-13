@@ -60,11 +60,11 @@ public class MediaVariantProcessingService {
             MediaVariantService.Variants generated = variants.get();
             r2.upload(thumbKey, new ByteArrayInputStream(generated.thumbnail()), generated.thumbnail().length, "image/jpeg");
             r2.upload(displayKey, new ByteArrayInputStream(generated.display()), generated.display().length, "image/jpeg");
-            QuarkusTransaction.requiringNew().run(() -> complete(payload.mediaId(), thumbKey, displayKey));
-        } catch (Exception exception) {
+            QuarkusTransaction.requiringNew().run(() -> complete(payload, thumbKey, displayKey));
+        } catch (Exception | LinkageError exception) {
             LOG.warnf(exception, "Variant processing failed for media %s", payload.mediaId());
             String error = exception.getClass().getSimpleName() + ": " + exception.getMessage();
-            QuarkusTransaction.requiringNew().run(() -> fail(payload.mediaId(), error));
+            QuarkusTransaction.requiringNew().run(() -> fail(payload, error));
         } finally {
             if (downloaded != null) {
                 try {
@@ -76,14 +76,28 @@ public class MediaVariantProcessingService {
         }
     }
 
-    private JobPayload claimNext() {
+    JobPayload claimNext() {
         OffsetDateTime now = OffsetDateTime.now();
+        int exhausted = entityManager.createQuery(
+                        "UPDATE MediaVariantJob j SET j.status = 'FAILED', j.leaseExpiresAt = NULL, "
+                                + "j.lastError = COALESCE(j.lastError, 'Attempt limit reached after worker lease expired'), "
+                                + "j.updatedAt = :now "
+                                + "WHERE j.attemptCount >= :maxAttempts AND "
+                                + "(j.status = 'PENDING' OR (j.status = 'PROCESSING' AND j.leaseExpiresAt <= :now))")
+                .setParameter("now", now)
+                .setParameter("maxAttempts", MAX_ATTEMPTS)
+                .executeUpdate();
+        if (exhausted > 0) {
+            LOG.warnf("Marked %d variant jobs FAILED after exhausting attempt limit", exhausted);
+        }
         MediaVariantJob job = entityManager.createQuery(
                         "SELECT j FROM MediaVariantJob j JOIN FETCH j.media m JOIN FETCH m.guest "
-                                + "WHERE (j.status = 'PENDING' AND j.availableAt <= :now) "
-                                + "OR (j.status = 'PROCESSING' AND j.leaseExpiresAt <= :now) "
+                                + "WHERE j.attemptCount < :maxAttempts AND "
+                                + "((j.status = 'PENDING' AND j.availableAt <= :now) "
+                                + "OR (j.status = 'PROCESSING' AND j.leaseExpiresAt <= :now)) "
                                 + "ORDER BY j.availableAt ASC", MediaVariantJob.class)
                 .setParameter("now", now)
+                .setParameter("maxAttempts", MAX_ATTEMPTS)
                 .setMaxResults(1)
                 .setLockMode(LockModeType.PESSIMISTIC_WRITE)
                 .getResultStream()
@@ -96,12 +110,13 @@ public class MediaVariantProcessingService {
         job.attemptCount++;
         job.leaseExpiresAt = now.plusMinutes(5);
         MediaAsset media = job.media;
-        return new JobPayload(media.id, media.event.id, media.guest.id, media.mediaType, media.contentType, media.r2Key);
+        return new JobPayload(media.id, media.event.id, media.guest.id, media.mediaType, media.contentType,
+                media.r2Key, job.attemptCount);
     }
 
-    private void complete(UUID mediaId, String thumbKey, String displayKey) {
-        MediaVariantJob job = entityManager.find(MediaVariantJob.class, mediaId, LockModeType.PESSIMISTIC_WRITE);
-        if (job == null || !"PROCESSING".equals(job.status)) {
+    void complete(JobPayload payload, String thumbKey, String displayKey) {
+        MediaVariantJob job = entityManager.find(MediaVariantJob.class, payload.mediaId(), LockModeType.PESSIMISTIC_WRITE);
+        if (!ownsAttempt(job, payload)) {
             return;
         }
         job.media.r2ThumbKey = thumbKey;
@@ -109,11 +124,12 @@ public class MediaVariantProcessingService {
         job.status = "COMPLETED";
         job.leaseExpiresAt = null;
         job.lastError = null;
+        LOG.infof("Media variants completed mediaId=%s attempt=%d", payload.mediaId(), payload.attempt());
     }
 
-    private void fail(UUID mediaId, String error) {
-        MediaVariantJob job = entityManager.find(MediaVariantJob.class, mediaId, LockModeType.PESSIMISTIC_WRITE);
-        if (job == null || !"PROCESSING".equals(job.status)) {
+    void fail(JobPayload payload, String error) {
+        MediaVariantJob job = entityManager.find(MediaVariantJob.class, payload.mediaId(), LockModeType.PESSIMISTIC_WRITE);
+        if (!ownsAttempt(job, payload)) {
             return;
         }
         job.lastError = error.length() > 500 ? error.substring(0, 500) : error;
@@ -124,6 +140,10 @@ public class MediaVariantProcessingService {
         }
         job.status = "PENDING";
         job.availableAt = OffsetDateTime.now().plusMinutes(job.attemptCount);
+    }
+
+    private boolean ownsAttempt(MediaVariantJob job, JobPayload payload) {
+        return job != null && "PROCESSING".equals(job.status) && job.attemptCount == payload.attempt();
     }
 
     private String buildVariantKey(JobPayload payload, String variantFolder) {
@@ -142,7 +162,7 @@ public class MediaVariantProcessingService {
         };
     }
 
-    private record JobPayload(UUID mediaId, UUID eventId, UUID guestId, String mediaType,
-                              String contentType, String r2Key) {
+    record JobPayload(UUID mediaId, UUID eventId, UUID guestId, String mediaType,
+                      String contentType, String r2Key, int attempt) {
     }
 }

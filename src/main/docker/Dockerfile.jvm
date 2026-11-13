@@ -84,8 +84,13 @@ FROM eclipse-temurin:21-jre
 
 ENV LANGUAGE='en_US:en'
 
-# Video poster + HEIC conversion (MediaVariantService) use JavaCV's bundled ffmpeg
-# natives, no OS-level ffmpeg install needed. Build with
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libxcb1 libxcb-shm0 libasound2t64 libheif-examples libheif-plugin-libde265 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Video posters use JavaCV's bundled ffmpeg; HEIC photos use libheif's decoder.
+# No OS-level ffmpeg install is needed. Build with
 # -Djavacpp.platform=linux-arm64 so only the ARM64 native jar ships in target/quarkus-app/lib.
 
 # We make four distinct layers so if there are application changes the library layers can be re-used
@@ -101,4 +106,3 @@ ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=or
 ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
 
 ENTRYPOINT [ "sh", "-c", "exec java $JAVA_OPTS $JAVA_OPTS_APPEND -cp . -jar /deployments/quarkus-run.jar" ]
-

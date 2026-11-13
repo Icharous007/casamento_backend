@@ -21,11 +21,41 @@ Sorts: `recent` (newest first), `popular` (most likes, then newest), and
 `random` (weighted random sampling without replacement). Random weights are
 `1 + ln(1 + likes) + 2 * ln(1 + comments)`: comments carry more weight, the
 logarithm limits popularity dominance, and unengaged media remain eligible.
+Production uses `ThreadLocalRandom` from `java.base`, without requiring the
+optional random-generator providers that may be absent from JRE images.
 Only lightweight candidate metadata is scanned when creating the snapshot;
 media files are never downloaded by the feed endpoint. Snapshot creation is
 intended for event-sized galleries; larger deployments should measure this
 scan and snapshot storage before introducing precomputed ranking.
 The existing page-based `/api/v1/media` and admin APIs remain compatible.
+
+## Media conversion
+
+The runtime image installs `libheif-examples` and the HEVC decoder plugin
+`libheif-plugin-libde265` for HEIC/HEIF photos. `heif-convert` produces a JPEG
+before the existing 400px thumbnail and 1600px display resizing. JPEG/PNG
+photos still use ImageIO. Video posters use bundled JavaCV/FFmpeg with the
+runtime libraries `libxcb1`, `libxcb-shm0`, and `libasound2t64`.
+
+Variant jobs stop after three attempts, including attempts recovered after
+an expired worker lease. Native linkage failures are recorded, and a late
+worker cannot complete/fail a newer attempt. Conversion subprocesses have a
+20-second timeout, drained/bounded diagnostics, and temporary-file cleanup.
+Requeue failed jobs explicitly only after resolving their recorded cause.
+
+Run `./mvnw -Dtest=MediaVariantServiceTest,MediaVariantProcessingServiceTest test`.
+Before production rollout, run `MediaVariantRuntimeCheck` from the test classes
+inside the final target-architecture image, mounting a known-good HEIC privately:
+
+```shell
+docker run --rm --entrypoint java -v /absolute/checks:/checks:ro IMAGE \
+  -Dorg.jboss.logging.provider=jdk \
+  -cp '/deployments/lib/boot/*:/deployments/lib/main/*:/deployments/app/*:/checks/test-classes' \
+  br.com.casamento.media.service.MediaVariantRuntimeCheck /checks/photo.heic image/heic --video
+```
+
+This checks decodable JPEGs, their maximum dimensions, and native video-poster
+extraction without starting Quarkus or accessing the production database.
 
 If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
 

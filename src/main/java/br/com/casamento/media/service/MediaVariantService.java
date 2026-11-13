@@ -3,7 +3,6 @@ package br.com.casamento.media.service;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.bytedeco.ffmpeg.global.avutil;
-import org.bytedeco.javacpp.Loader;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;
 import org.bytedeco.javacv.Java2DFrameConverter;
@@ -39,17 +38,13 @@ import java.util.concurrent.ThreadPoolExecutor;
  * frontend never has to download full-resolution originals for grid/viewer rendering.
  * Photos are resized with pure-Java ImageIO (no external dependency). Video posters use
  * JavaCV's embedded ffmpeg natives (no OS install required). HEIC photos fall back to the
- * bundled ffmpeg binary on a best-effort basis; any failure degrades gracefully
+ * libheif decoder installed in the production image; any failure degrades gracefully
  * (caller keeps serving the original file).
  */
 @ApplicationScoped
 public class MediaVariantService {
 
     private static final Logger LOG = Logger.getLogger(MediaVariantService.class);
-
-    static {
-        avutil.av_log_set_level(avutil.AV_LOG_ERROR); // silence ffmpeg's verbose native logging
-    }
 
     private static final int THUMB_MAX_DIMENSION = 400;
     private static final int DISPLAY_MAX_DIMENSION = 1600;
@@ -73,15 +68,16 @@ public class MediaVariantService {
         try {
             BufferedImage original = readAndOrient(filePath);
             if (original == null && HEIC_TYPES.contains(contentType)) {
-                original = readViaFfmpegConversion(filePath);
+                original = readViaHeifConversion(filePath);
             }
             if (original == null) {
+                LOG.warnf("No image decoder produced a photo for contentType=%s", contentType);
                 return Optional.empty();
             }
             byte[] thumb = resizeToJpeg(original, THUMB_MAX_DIMENSION, THUMB_QUALITY);
             byte[] display = resizeToJpeg(original, DISPLAY_MAX_DIMENSION, DISPLAY_QUALITY);
             return Optional.of(new Variants(thumb, display));
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             LOG.warnf(e, "Failed to generate photo variants for %s", filePath);
             return Optional.empty();
         }
@@ -109,6 +105,7 @@ public class MediaVariantService {
     }
 
     private BufferedImage grabPosterFrame(Path filePath) throws Exception {
+        avutil.av_log_set_level(avutil.AV_LOG_ERROR);
         try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(filePath.toFile())) {
             grabber.start();
             long duration = grabber.getLengthInTime();
@@ -123,39 +120,79 @@ public class MediaVariantService {
         }
     }
 
-    private BufferedImage readViaFfmpegConversion(Path filePath) {
-        Path converted = null;
+    private BufferedImage readViaHeifConversion(Path filePath) {
+        Path directory = null;
         try {
-            converted = Files.createTempFile("heic-", ".jpg");
-            boolean ok = runFfmpeg(List.of(resolveFfmpegBinary(), "-loglevel", "error", "-y", "-i", filePath.toString(), converted.toString()), 20);
-            if (!ok || Files.size(converted) == 0) {
+            directory = Files.createTempDirectory("heic-");
+            Path converted = directory.resolve("display.jpg");
+            boolean ok = runConverter(List.of("heif-convert", "--quiet", "-q", "90",
+                    filePath.toString(), converted.toString()), 20);
+            if (!ok) {
                 return null;
             }
-            return ImageIO.read(converted.toFile());
-        } catch (Exception e) {
-            LOG.debugf(e, "ffmpeg HEIC conversion unavailable for %s", filePath);
+            try (var files = Files.list(directory)) {
+                Path image = files.filter(path -> path.getFileName().toString().endsWith(".jpg"))
+                        .sorted().findFirst().orElseThrow(() -> new IOException("HEIC converter produced no JPEG"));
+                BufferedImage decoded = ImageIO.read(image.toFile());
+                if (decoded == null) {
+                    throw new IOException("HEIC converter output is not a decodable JPEG");
+                }
+                return decoded;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            LOG.warnf(e, "HEIC conversion interrupted");
+            return null;
+        } catch (IOException | LinkageError e) {
+            LOG.warnf(e, "HEIC conversion failed");
             return null;
         } finally {
-            deleteQuietly(converted);
+            if (directory != null) {
+                try (var files = Files.list(directory)) {
+                    files.forEach(this::deleteQuietly);
+                } catch (IOException e) {
+                    LOG.warnf(e, "Failed to clean HEIC conversion files");
+                }
+                deleteQuietly(directory);
+            }
         }
     }
 
-    private String resolveFfmpegBinary() {
-        try {
-            return Loader.load(org.bytedeco.ffmpeg.ffmpeg.class);
-        } catch (Exception e) {
-            return "ffmpeg"; // fall back to PATH lookup, best effort only
-        }
-    }
-
-    private boolean runFfmpeg(List<String> command, int timeoutSeconds) throws IOException, InterruptedException {
+    boolean runConverter(List<String> command, int timeoutSeconds) throws IOException, InterruptedException {
         Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            return false;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Thread reader = Thread.ofVirtual().start(() -> {
+            try (InputStream input = process.getInputStream()) {
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    if (output.size() < 4096) {
+                        output.write(buffer, 0, Math.min(count, 4096 - output.size()));
+                    }
+                }
+            } catch (IOException e) {
+                if (process.isAlive()) LOG.warnf(e, "Failed to read media converter output");
+            }
+        });
+        try {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                LOG.warnf("Media conversion timed out after %ds", timeoutSeconds);
+                return false;
+            }
+            reader.join();
+            if (process.exitValue() != 0) {
+                LOG.warnf("Media conversion failed exitCode=%d output=%s",
+                        process.exitValue(), output.toString(java.nio.charset.StandardCharsets.UTF_8));
+                return false;
+            }
+            return true;
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+            process.getInputStream().close();
+            reader.interrupt();
         }
-        return process.exitValue() == 0;
     }
 
     private void deleteQuietly(Path path) {

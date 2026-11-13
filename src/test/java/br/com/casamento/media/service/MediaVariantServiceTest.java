@@ -13,9 +13,12 @@ import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Regression test for the "ffmpeg: No such file or directory" bug: video poster
@@ -45,6 +48,49 @@ class MediaVariantServiceTest {
         assertNotNull(thumb);
         assertNotNull(display);
         assertTrue(thumb.getWidth() <= 400 && thumb.getHeight() <= 400);
+    }
+
+    @Test
+    void invalidHeicDoesNotProduceFakeVariants() throws Exception {
+        videoFile = Files.createTempFile("invalid-", ".heic");
+        Files.writeString(videoFile, "not a HEIC image");
+        assertTrue(service.generatePhotoVariants(videoFile, "image/heic").isEmpty());
+    }
+
+    @Test
+    void jpegConversionDoesNotRequireNativeVideoLoader() throws Exception {
+        videoFile = Files.createTempFile("photo-", ".jpg");
+        ImageIO.write(new BufferedImage(2000, 1000, BufferedImage.TYPE_INT_RGB), "jpg", videoFile.toFile());
+        var variants = service.generatePhotoVariants(videoFile, "image/jpeg").orElseThrow();
+        BufferedImage thumb = ImageIO.read(new ByteArrayInputStream(variants.thumbnail()));
+        BufferedImage display = ImageIO.read(new ByteArrayInputStream(variants.display()));
+        assertTrue(thumb.getWidth() == 400 && thumb.getHeight() == 200);
+        assertTrue(display.getWidth() == 1600 && display.getHeight() == 800);
+    }
+
+    @Test
+    void converterDrainsOutputBeyondPipeCapacity() throws Exception {
+        assertTrue(service.runConverter(List.of("sh", "-c",
+                "head -c 262144 /dev/zero; exit 0"), 5));
+        assertFalse(service.runConverter(List.of("sh", "-c", "echo invalid-input; exit 2"), 5));
+    }
+
+    @Test
+    void converterTimeoutTerminatesChild() throws Exception {
+        videoFile = Files.createTempFile("converter-pid-", ".txt");
+        assertFalse(service.runConverter(List.of("sh", "-c",
+                "echo $$ > \"$1\"; exec sleep 60", "converter", videoFile.toString()), 1));
+        long pid = Long.parseLong(Files.readString(videoFile).trim());
+        for (int i = 0; i < 50 && ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false); i++) {
+            Thread.sleep(20);
+        }
+        assertFalse(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+    }
+
+    @Test
+    void missingConverterIsAnExplicitFailure() {
+        assertThrows(java.io.IOException.class,
+                () -> service.runConverter(List.of("/nonexistent/media-converter"), 1));
     }
 
     private Path createSyntheticMp4() throws Exception {

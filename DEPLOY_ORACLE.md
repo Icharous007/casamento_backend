@@ -218,6 +218,13 @@ docker buildx inspect --bootstrap
 ./mvnw -q -DskipTests clean package -Djavacpp.platform=linux-arm64
 ```
 
+   A imagem tambem instala `libheif-examples` e `libheif-plugin-libde265`
+   para fotos HEIC, e bibliotecas XCB/ALSA para os nativos de video.
+   Antes de publicar, valide uma conversao HEIC real e um poster de video
+   dentro da imagem ARM64 final conforme [README.md](README.md#media-conversion).
+   Testes executados apenas no JDK de desenvolvimento nao validam essas
+   dependencias do container.
+
 4. Antes de enviar, valide o compile e os scripts:
 
 ```bash
